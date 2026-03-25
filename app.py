@@ -39,73 +39,75 @@ if menu == "📝 Inscriptions":
 # --- SECTION 2 : ADMINISTRATION ---
 elif menu == "🔐 Administration":
     st.header("🔐 Espace de Gestion")
-    password = st.text_input("Code secret", type="password")
+    password_global = st.text_input("Code secret de session", type="password")
     
-    if password == "1234":
+    if password_global == "1234":
+        st.success("Session Administrateur Active")
+        
         t1, t2, t3 = st.tabs(["🏗️ Ateliers", "👥 Gestion des Adhérents", "📍 Configuration"])
         
-        # --- ONGLET ADHÉRENTS (MODIFIÉ) ---
+        # --- ONGLET ADHÉRENTS (AVEC SUPPRESSION SÉCURISÉE) ---
         with t2:
             st.subheader("👥 Répertoire des Adhérents")
             
-            # Formulaire d'ajout
             with st.expander("➕ Ajouter un nouvel adhérent"):
                 with st.form("new_user"):
-                    col_n, col_p = st.columns(2)
-                    nom_n = col_n.text_input("Nom de famille")
-                    pre_n = col_p.text_input("Prénom")
-                    col_a, col_adm = st.columns(2)
-                    is_act = col_a.checkbox("Compte actif", value=True)
-                    is_adm = col_adm.checkbox("Est administrateur", value=False)
-                    
+                    c_n, c_p = st.columns(2)
+                    nom_n = c_n.text_input("Nom de famille")
+                    pre_n = c_p.text_input("Prénom")
+                    c_a, c_adm = st.columns(2)
+                    is_act = c_a.checkbox("Compte actif", value=True)
+                    is_adm = c_adm.checkbox("Est administrateur", value=False)
                     if st.form_submit_button("Créer la fiche"):
                         if nom_n and pre_n:
-                            supabase.table("adherents").insert({
-                                "nom": nom_n.upper(), "prenom": pre_n.capitalize(),
-                                "est_actif": is_act, "est_admin": is_adm
-                            }).execute()
+                            supabase.table("adherents").insert({"nom": nom_n.upper(), "prenom": pre_n.capitalize(), "est_actif": is_act, "est_admin": is_adm}).execute()
                             st.success("Adhérent ajouté !")
                             st.rerun()
             
             st.divider()
-
-            # Liste et Filtres
-            filtre = st.radio("Afficher :", ["Tous", "Actifs uniquement", "Inactifs uniquement"], horizontal=True)
+            filtre = st.radio("Filtrer la liste :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
             
             query = supabase.table("adherents").select("*")
-            if filtre == "Actifs uniquement":
-                query = query.eq("est_actif", True)
-            elif filtre == "Inactifs uniquement":
-                query = query.eq("est_actif", False)
-            
+            if filtre == "Actifs": query = query.eq("est_actif", True)
+            elif filtre == "Inactifs": query = query.eq("est_actif", False)
             utilisateurs = query.execute().data
             
             if utilisateurs:
-                df = pd.DataFrame(utilisateurs)
-                # On réorganise les colonnes pour la lecture
-                df = df[['id', 'nom', 'prenom', 'est_actif', 'est_admin']]
-                
-                for index, row in df.iterrows():
+                for row in utilisateurs:
                     with st.container():
-                        c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+                        c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
                         c1.write(f"**{row['nom']}** {row['prenom']}")
                         
-                        # Boutons de modification rapide
-                        statut_label = "✅ Actif" if row['est_actif'] else "❌ Inactif"
-                        if c2.button(statut_label, key=f"act_{row['id']}"):
+                        # Changement Statut Actif
+                        label_statut = "✅ Actif" if row['est_actif'] else "❌ Inactif"
+                        if c2.button(label_statut, key=f"act_{row['id']}"):
                             supabase.table("adherents").update({"est_actif": not row['est_actif']}).eq("id", row['id']).execute()
                             st.rerun()
-                            
-                        admin_label = "🔑 Admin" if row['est_admin'] else "👤 Membre"
-                        if c3.button(admin_label, key=f"adm_{row['id']}"):
+                        
+                        # Changement Statut Admin
+                        label_admin = "🔑 Admin" if row['est_admin'] else "👤 Membre"
+                        if c3.button(label_admin, key=f"adm_{row['id']}"):
                             supabase.table("adherents").update({"est_admin": not row['est_admin']}).eq("id", row['id']).execute()
                             st.rerun()
+
+                        # BOUTON SUPPRESSION AVEC DIALOGUE DE CONFIRMATION
+                        if c4.button("🗑️", key=f"del_request_{row['id']}", help="Supprimer définitivement"):
+                            # On ouvre un pop-up de confirmation spécifique
+                            @st.dialog(f"Supprimer {row['prenom']} {row['nom']} ?")
+                            def confirm_delete(adh_id, adh_name):
+                                st.warning(f"Attention : La suppression de **{adh_name}** est irréversible.")
+                                code_confirm = st.text_input("Saisissez le code secret pour confirmer", type="password")
+                                if st.button("Confirmer la suppression définitive"):
+                                    if code_confirm == "1234":
+                                        supabase.table("adherents").delete().eq("id", adh_id).execute()
+                                        st.success("Adhérent supprimé.")
+                                        st.rerun()
+                                    else:
+                                        st.error("Code incorrect.")
                             
-                        if c4.button("🗑️", key=f"del_{row['id']}"):
-                            supabase.table("adherents").delete().eq("id", row['id']).execute()
-                            st.rerun()
+                            confirm_delete(row['id'], f"{row['prenom']} {row['nom']}")
             else:
-                st.info("Aucun adhérent ne correspond à ce filtre.")
+                st.info("Aucun adhérent trouvé.")
 
         # --- ONGLET ATELIERS ---
         with t1:
