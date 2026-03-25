@@ -3,8 +3,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 
-# 1. Configuration - Interface large pour éviter le scroll
-st.set_page_config(page_title="RPE Connect - Gestion Intégrale", page_icon="🌿", layout="wide")
+# 1. Configuration - Interface large
+st.set_page_config(page_title="RPE Connect - Gestion Master", page_icon="🌿", layout="wide")
 
 url = st.secrets["supabase_url"]
 key = st.secrets["supabase_key"]
@@ -22,20 +22,24 @@ def format_date_fr(date_obj):
     mois = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
     if isinstance(date_obj, str):
         try: date_obj = datetime.strptime(date_obj, '%Y-%m-%d')
-        except: return date_obj
+        except: return date_obj # Retourne le texte tel quel si déjà formaté
     return f"{jours[date_obj.weekday()]} {date_obj.day} {mois[date_obj.month-1]} {date_obj.year}"
 
 current_code = get_secret_code()
 
+# --- INITIALISATION SESSION ---
+if 'at_list' not in st.session_state:
+    st.session_state['at_list'] = []
+
 st.title("🌿 Système RPE Connect")
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "🔐 Administration"])
 
-# --- SECTION 1 : INSTRUCTIONS (RESTAURÉ) ---
+# --- SECTION 1 : INSCRIPTION ---
 if menu == "📝 Inscriptions":
     st.header("📍 Inscription aux Ateliers")
     res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").execute()
     noms_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
-    choix_adh = st.selectbox("Sélectionnez votre nom", ["Choisir..."] + list(noms_adh.keys()))
+    choix_adh = st.selectbox("Votre nom", ["Choisir..."] + list(noms_adh.keys()))
     
     if choix_adh != "Choisir...":
         res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).order("date_atelier").execute()
@@ -43,192 +47,163 @@ if menu == "📝 Inscriptions":
             for at in res_at.data:
                 with st.expander(f"📅 {format_date_fr(at['date_atelier'])} - {at['titre']}"):
                     st.write(f"🏠 **Lieu :** {at['lieux']['nom']} | ⏰ **Horaire :** {at['horaires']['libelle']}")
-                    st.write(f"👥 **Places :** {at['capacite_max']}")
-                    if st.button("Confirmer l'inscription", key=f"at_reg_{at['id']}"):
+                    if st.button("S'inscrire", key=f"at_reg_{at['id']}"):
                         supabase.table("inscriptions").insert({"adherent_id": noms_adh[choix_adh], "atelier_id": at['id']}).execute()
-                        st.success("✅ Inscription validée !")
+                        st.success("✅ Inscrit !")
 
 # --- SECTION 2 : ADMINISTRATION ---
 elif menu == "🔐 Administration":
     st.header("🔐 Espace de Gestion")
     
-    col_pass, col_forget = st.columns([2, 1])
-    with col_pass:
-        password_input = st.text_input("Code secret de session", type="password")
-    
-    with col_forget:
+    col_p, col_f = st.columns([2, 1])
+    with col_p: password_input = st.text_input("Code secret", type="password")
+    with col_f:
         st.write(" ")
-        if st.button("Code secret oublié ?"):
-            @st.dialog("Récupération du code")
+        if st.button("Oubli ?"):
+            @st.dialog("Récupération")
             def recover():
-                rescue = st.text_input("Code de secours (0000)", type="password")
+                rescue = st.text_input("Secours (0000)", type="password")
                 new_c = st.text_input("Nouveau code", type="password")
-                if st.button("Réinitialiser"):
-                    if rescue == "0000" and new_c:
+                if st.button("OK"):
+                    if rescue == "0000":
                         supabase.table("configuration").update({"secret_code": new_c}).eq("id", "main_config").execute()
-                        st.success("Code modifié ! Reconnectez-vous.")
                         st.rerun()
             recover()
 
     if password_input == current_code:
-        t1, t2, t3, t4 = st.tabs(["🏗️ Gestion Ateliers", "👥 Adhérents", "📍 Lieux & Horaires", "⚙️ Sécurité"])
+        t1, t2, t3, t4 = st.tabs(["🏗️ Ateliers", "👥 Adhérents", "📍 Lieux/Horaires", "⚙️ Sécurité"])
         
-        # --- ONGLET 1 : GESTION DES ATELIERS ---
         with t1:
+            # Récupération données pour les listes
             l_data = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
             h_data = supabase.table("horaires").select("*").eq("est_actif", True).execute().data
-            liste_lieux = [l['nom'] for l in l_data]
-            liste_horaires = [h['libelle'] for h in h_data]
+            liste_l = [l['nom'] for l in l_data]; liste_h = [h['libelle'] for h in h_data]
             map_capa = {l['nom']: l['capacite_accueil'] for l in l_data}
 
-            st.subheader("🚀 Création des Ateliers")
+            st.subheader("🚀 Préparation du Planning")
             
-            with st.expander("🛠️ Configurer la série ou l'ajout unique"):
+            with st.expander("🛠️ Générateur / Ajout Unique"):
                 c1, c2 = st.columns(2)
-                d_debut = c1.date_input("Date de début", datetime.now(), format="DD/MM/YYYY")
-                d_fin = c2.date_input("Date de fin", d_debut + timedelta(days=14), format="DD/MM/YYYY")
+                d_deb = c1.date_input("Début", datetime.now(), format="DD/MM/YYYY")
+                d_fin = c2.date_input("Fin", d_deb + timedelta(days=7), format="DD/MM/YYYY")
                 jours = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
-                titre_s = st.text_input("Titre par défaut", value="Atelier Éveil")
                 
-                col_btn1, col_btn2 = st.columns(2)
-                if col_btn1.button("📊 Générer la série"):
+                col_g1, col_g2 = st.columns(2)
+                if col_g1.button("📊 Générer la série"):
                     temp = []
-                    curr = d_debut
+                    curr = d_deb
                     js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                     while curr <= d_fin:
                         if js_fr[curr.weekday()] in jours:
-                            temp.append({
-                                "Date": format_date_fr(curr), "Titre": titre_s, "Lieu": liste_lieux[0],
-                                "Horaire": liste_horaires[0], "Capacité": map_capa[liste_lieux[0]],
-                                "Actif": True, "_raw_date": str(curr)
-                            })
+                            temp.append({"Date": format_date_fr(curr), "Titre": "Atelier Éveil", "Lieu": liste_l[0], "Horaire": liste_h[0], "Capacité": map_capa[liste_l[0]], "Actif": True, "_raw_date": str(curr)})
                         curr += timedelta(days=1)
                     st.session_state['at_list'] = temp
+                    st.rerun()
 
-                if col_btn2.button("➕ Ajouter une ligne vide"):
-                    row = {"Date": format_date_fr(datetime.now()), "Titre": "Nouvel Atelier", "Lieu": liste_lieux[0],
-                           "Horaire": liste_horaires[0], "Capacité": map_capa[liste_lieux[0]], "Actif": True, "_raw_date": str(datetime.now().date())}
-                    if 'at_list' not in st.session_state: st.session_state['at_list'] = []
-                    st.session_state['at_list'].append(row)
+                if col_g2.button("➕ Ajouter une ligne vierge"):
+                    st.session_state['at_list'].append({"Date": format_date_fr(datetime.now()), "Titre": "", "Lieu": liste_l[0], "Horaire": liste_h[0], "Capacité": map_capa[liste_l[0]], "Actif": True, "_raw_date": str(datetime.now().date())})
+                    st.rerun()
 
-            if 'at_list' in st.session_state and st.session_state['at_list']:
-                st.write("### 📋 Révision du tableau")
-                df_temp = pd.DataFrame(st.session_state['at_list'])
+            if st.session_state['at_list']:
+                st.write("### 📋 Tableau de révision")
+                st.caption("Modifiez les dates, titres, lieux. Supprimez via la corbeille à droite.")
                 
-                # ÉDITION DU TABLEAU
-                edited_df = st.data_editor(
-                    df_temp, hide_index=True, use_container_width=True, num_rows="dynamic",
+                df_editor = pd.DataFrame(st.session_state['at_list'])
+                
+                # TABLEAU DYNAMIQUE
+                res_df = st.data_editor(
+                    df_editor, hide_index=True, use_container_width=True, num_rows="dynamic",
                     column_config={
-                        "Date": st.column_config.TextColumn("Date", width="medium", disabled=True),
-                        "Titre": st.column_config.TextColumn("Titre de l'atelier", width="large"),
-                        "Lieu": st.column_config.SelectboxColumn("Lieu", options=liste_lieux, width="medium"),
-                        "Horaire": st.column_config.SelectboxColumn("Horaire", options=liste_horaires, width="small"),
+                        "Date": st.column_config.TextColumn("Date", width="medium"), # ÉDITABLE MAINTENANT
+                        "Titre": st.column_config.TextColumn("Titre", width="large"),
+                        "Lieu": st.column_config.SelectboxColumn("Lieu", options=liste_l, width="medium"),
+                        "Horaire": st.column_config.SelectboxColumn("Horaire", options=liste_h, width="small"),
                         "Capacité": st.column_config.NumberColumn("Cap.", width="small"),
                         "Actif": st.column_config.CheckboxColumn("Actif", width="small"),
                         "_raw_date": None
-                    }
+                    },
+                    key="main_editor"
                 )
 
-                # LOGIQUE DE MISE À JOUR AUTOMATIQUE DES CAPACITÉS
-                # On compare le DataFrame édité avec celui en session pour détecter un changement de lieu
-                if not edited_df.equals(df_temp):
-                    for i, row in edited_df.iterrows():
-                        # Si le lieu a changé par rapport à la session, on met à jour la capacité
-                        if i < len(st.session_state['at_list']) and row['Lieu'] != st.session_state['at_list'][i]['Lieu']:
-                            edited_df.at[i, 'Capacité'] = map_capa.get(row['Lieu'], 10)
-                    st.session_state['at_list'] = edited_df.to_dict(orient='records')
+                # SYNC & AUTO-CAPACITÉ : On ne met à jour que si nécessaire pour éviter les boucles
+                if not res_df.equals(df_editor):
+                    # Mise à jour des capacités si le lieu a changé
+                    for i, row in res_df.iterrows():
+                        if i < len(st.session_state['at_list']):
+                            if row['Lieu'] != st.session_state['at_list'][i]['Lieu']:
+                                res_df.at[i, 'Capacité'] = map_capa.get(row['Lieu'], 10)
+                    st.session_state['at_list'] = res_df.to_dict(orient='records')
                     st.rerun()
 
-                c_save, c_del = st.columns(2)
-                if c_save.button("✅ Enregistrer définitivement"):
-                    map_l = {l['nom']: l['id'] for l in l_data}
-                    map_h = {h['libelle']: h['id'] for h in h_data}
-                    to_db = [{"date_atelier": r['_raw_date'], "titre": r['Titre'], "lieu_id": map_l[r['Lieu']], 
-                              "horaire_id": map_h[r['Horaire']], "capacite_max": r['Capacité'], "est_actif": r['Actif']} 
-                             for _, r in edited_df.iterrows() if r.get('Titre')]
+                c_save, c_clear = st.columns(2)
+                if c_save.button("✅ Valider et Publier"):
+                    m_l = {l['nom']: l['id'] for l in l_data}; m_h = {h['libelle']: h['id'] for h in h_data}
+                    to_db = [{"date_atelier": r.get('_raw_date', str(datetime.now().date())), "titre": r['Titre'], "lieu_id": m_l[r['Lieu']], "horaire_id": m_h[r['Horaire']], "capacite_max": r['Capacité'], "est_actif": r['Actif']} for _, r in res_df.iterrows() if r['Titre']]
                     supabase.table("ateliers").insert(to_db).execute()
-                    del st.session_state['at_list']
-                    st.success("Ateliers publiés !")
+                    st.session_state['at_list'] = []
+                    st.success("Enregistré !")
                     st.rerun()
-                if c_del.button("❌ Tout annuler"):
-                    del st.session_state['at_list']
+                if c_clear.button("🗑️ Tout annuler"):
+                    st.session_state['at_list'] = []
                     st.rerun()
 
-        # --- ONGLET 2 : ADHÉRENTS (RESTAURÉ) ---
+        # --- ONGLET 2 : ADHÉRENTS (RESTAURÉ INTÉGRAL) ---
         with t2:
-            st.subheader("👥 Répertoire des Adhérents")
-            with st.expander("➕ Ajouter un adhérent"):
-                with st.form("new_adh"):
+            st.subheader("👥 Adhérents")
+            with st.expander("➕ Nouveau"):
+                with st.form("adh_f"):
                     n, p = st.text_input("Nom"), st.text_input("Prénom")
-                    if st.form_submit_button("Créer"):
+                    if st.form_submit_button("Ajouter"):
                         supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute()
                         st.rerun()
             for u in supabase.table("adherents").select("*").eq("est_actif", True).order("nom").execute().data:
                 with st.container(border=True):
-                    c1, c2, c3 = st.columns([4, 2, 1])
-                    c1.write(f"**{u['nom']}** {u['prenom']}")
-                    if c2.button("Désactiver", key=f"u_act_{u['id']}"):
+                    c1, c2 = st.columns([5, 1])
+                    c1.write(f"{u['nom']} {u['prenom']}")
+                    if c2.button("🗑️", key=f"u_{u['id']}"):
                         supabase.table("adherents").update({"est_actif": False}).eq("id", u['id']).execute()
                         st.rerun()
-                    if c3.button("🗑️", key=f"u_del_{u['id']}"):
-                        supabase.table("adherents").delete().eq("id", u['id']).execute()
-                        st.rerun()
 
-        # --- ONGLET 3 : LIEUX & HORAIRES (RESTAURÉ) ---
+        # --- ONGLET 3 : LIEUX / HORAIRES (RESTAURÉ INTÉGRAL) ---
         with t3:
-            at_ex = supabase.table("ateliers").select("lieu_id, horaire_id").execute().data
-            l_used = {a['lieu_id'] for a in at_ex}; h_used = {a['horaire_id'] for a in at_ex}
             col_l, col_h = st.columns(2)
             with col_l:
                 st.subheader("📍 Lieux")
-                with st.expander("➕ Ajouter un Lieu"):
-                    with st.form("fl"):
+                with st.expander("➕"):
+                    with st.form("l_f"):
                         nl, cl = st.text_input("Nom"), st.number_input("Capacité", min_value=1, value=10)
-                        if st.form_submit_button("Ajouter"):
+                        if st.form_submit_button("OK"):
                             supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cl, "est_actif": True}).execute()
                             st.rerun()
                 for l in l_data:
-                    lock = l['id'] in l_used
                     with st.container(border=True):
                         c1, c2 = st.columns([3, 1])
-                        nn = c1.text_input("Nom", value=l['nom'], key=f"ln_{l['id']}", disabled=lock)
-                        nc = c1.number_input("Capacité", value=l['capacite_accueil'], key=f"lc_{l['id']}", disabled=lock)
-                        if not lock and c2.button("💾", key=f"sl_{l['id']}"):
-                            supabase.table("lieux").update({"nom": nn, "capacite_accueil": nc}).eq("id", l['id']).execute()
-                            st.rerun()
-                        if c2.button("🗑️", key=f"dll_{l['id']}"):
+                        c1.write(f"{l['nom']} ({l['capacite_accueil']} pl.)")
+                        if c2.button("🗑️", key=f"l_{l['id']}"):
                             supabase.table("lieux").update({"est_actif": False}).eq("id", l['id']).execute()
                             st.rerun()
             with col_h:
                 st.subheader("⏰ Horaires")
-                with st.expander("➕ Nouveau"):
-                    with st.form("fh"):
-                        nh = st.text_input("Libellé")
-                        if st.form_submit_button("Ajouter"):
+                with st.expander("➕"):
+                    with st.form("h_f"):
+                        nh = st.text_input("Heure (ex: 10h-12h)")
+                        if st.form_submit_button("OK"):
                             supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute()
                             st.rerun()
                 for h in h_data:
-                    lock_h = h['id'] in h_used
                     with st.container(border=True):
                         c1, c2 = st.columns([3, 1])
-                        nhl = c1.text_input("Horaire", value=h['libelle'], key=f"hn_{h['id']}", disabled=lock_h)
-                        if not lock_h and c2.button("💾", key=f"sh_{h['id']}"):
-                            supabase.table("horaires").update({"libelle": nhl}).eq("id", h['id']).execute()
-                            st.rerun()
-                        if c2.button("🗑️", key=f"dh_{h['id']}"):
+                        c1.write(h['libelle'])
+                        if c2.button("🗑️", key=f"h_{h['id']}"):
                             supabase.table("horaires").update({"est_actif": False}).eq("id", h['id']).execute()
                             st.rerun()
 
         # --- ONGLET 4 : SÉCURITÉ ---
         with t4:
-            st.subheader("⚙️ Modifier le code secret")
-            with st.form("sec_update"):
-                old, new = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
-                if st.form_submit_button("Changer le code"):
-                    if old == current_code:
-                        supabase.table("configuration").update({"secret_code": new}).eq("id", "main_config").execute()
-                        st.success("Code mis à jour !")
+            with st.form("sec"):
+                o, n = st.text_input("Ancien", type="password"), st.text_input("Nouveau", type="password")
+                if st.form_submit_button("Changer"):
+                    if o == current_code:
+                        supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
                         st.rerun()
-    else:
-        st.info("Saisissez le code pour accéder à l'administration.")
-        
+    else: st.info("Entrez le code secret.")
