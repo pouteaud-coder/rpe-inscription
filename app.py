@@ -21,6 +21,9 @@ def get_secret_code():
 def format_date_fr(date_obj):
     jours = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
     mois = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+    # Gestion si la date arrive sous forme de string ou d'objet date
+    if isinstance(date_obj, str):
+        date_obj = datetime.strptime(date_obj, '%Y-%m-%d')
     return f"{jours[date_obj.weekday()]} {date_obj.day} {mois[date_obj.month-1]} {date_obj.year}"
 
 current_code = get_secret_code()
@@ -28,7 +31,7 @@ current_code = get_secret_code()
 st.title("🌿 Système RPE Connect")
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "🔐 Administration"])
 
-# --- SECTION 1 : INSCRIPTION (CÔTÉ UTILISATEUR) ---
+# --- SECTION 1 : INSCRIPTION ---
 if menu == "📝 Inscriptions":
     st.header("📍 Inscription aux Ateliers")
     res_adh = supabase.table("adherents").select("*").eq("est_actif", True).execute()
@@ -40,8 +43,7 @@ if menu == "📝 Inscriptions":
         res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).order("date_atelier").execute()
         if res_at.data:
             for at in res_at.data:
-                d_obj = datetime.strptime(at['date_atelier'], '%Y-%m-%d')
-                with st.expander(f"📅 {format_date_fr(d_obj)} - {at['titre']}"):
+                with st.expander(f"📅 {format_date_fr(at['date_atelier'])} - {at['titre']}"):
                     st.write(f"🏠 **Lieu :** {at['lieux']['nom']} | ⏰ **Horaire :** {at['horaires']['libelle']}")
                     st.write(f"👥 **Places disponibles :** {at['capacite_max']}")
                     if st.button("Confirmer l'inscription", key=f"at_{at['id']}"):
@@ -63,8 +65,7 @@ elif menu == "🔐 Administration":
         if st.button("Code secret oublié ?"):
             @st.dialog("Récupération du code")
             def recover():
-                st.warning("Code de secours : 0000")
-                rescue = st.text_input("Code de secours", type="password")
+                rescue = st.text_input("Code de secours (0000)", type="password")
                 new_c = st.text_input("Nouveau code secret", type="password")
                 if st.button("Réinitialiser"):
                     if rescue == "0000" and new_c:
@@ -77,7 +78,7 @@ elif menu == "🔐 Administration":
         st.success("Session Administrateur Active")
         t1, t2, t3, t4 = st.tabs(["🏗️ Gestion des Ateliers", "👥 Gestion des Adhérents", "📍 Gestion Lieux et Horaires", "⚙️ Sécurité"])
         
-        # --- ONGLET 1 : GESTION DES ATELIERS (GÉNÉRATEUR & TABLEAU) ---
+        # --- ONGLET 1 : GESTION DES ATELIERS ---
         with t1:
             st.subheader("🚀 Générateur d'ateliers en série")
             l_data = supabase.table("lieux").select("*").eq("est_actif", True).execute().data
@@ -101,10 +102,14 @@ elif menu == "🔐 Administration":
                         js_map = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                         while curr <= d_fin:
                             if js_map[curr.weekday()] in jours:
+                                # CRITIQUE : On garde l'objet date ici, pas de string !
                                 temp_list.append({
-                                    "date_atelier": str(curr), "titre": titre_at, 
-                                    "lieu_id": lieu_sel['id'], "horaire_id": horaire_sel['id'], 
-                                    "capacite_max": lieu_sel['capacite_accueil'], "est_actif": True
+                                    "date_atelier": curr, 
+                                    "titre": titre_at, 
+                                    "lieu_id": lieu_sel['id'], 
+                                    "horaire_id": horaire_sel['id'], 
+                                    "capacite_max": lieu_sel['capacite_accueil'], 
+                                    "est_actif": True
                                 })
                             curr += timedelta(days=1)
                         st.session_state['at_list'] = temp_list
@@ -112,22 +117,31 @@ elif menu == "🔐 Administration":
                 if 'at_list' in st.session_state:
                     st.write("### 📋 Modifier avant publication")
                     df_ed = pd.DataFrame(st.session_state['at_list'])
+                    
+                    # Le data_editor accepte maintenant les dates car elles sont au bon format
                     final_df = st.data_editor(df_ed, hide_index=True, column_config={
-                        "date_atelier": st.column_config.DateColumn("Date"),
+                        "date_atelier": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
+                        "titre": "Titre",
                         "capacite_max": st.column_config.NumberColumn("Capacité"),
-                        "lieu_id": None, "horaire_id": None # IDs cachés
+                        "est_actif": "Actif ?",
+                        "lieu_id": None, "horaire_id": None
                     })
+                    
                     if st.button("✅ Enregistrer les ateliers"):
-                        supabase.table("ateliers").insert(final_df.to_dict(orient='records')).execute()
+                        # Conversion des dates en texte juste avant l'envoi à Supabase
+                        data_to_send = final_df.copy()
+                        data_to_send['date_atelier'] = data_to_send['date_atelier'].astype(str)
+                        
+                        supabase.table("ateliers").insert(data_to_send.to_dict(orient='records')).execute()
                         del st.session_state['at_list']
-                        st.success("Ateliers créés !")
+                        st.success("Ateliers créés avec succès !")
                         st.rerun()
             else:
                 st.warning("Créez d'abord des lieux et horaires actifs.")
 
         # --- ONGLET 2 : GESTION DES ADHÉRENTS ---
         with t2:
-            st.subheader("👥 Répertoire des Adhérents")
+            st.subheader("👥 Répertoire")
             with st.expander("➕ Ajouter un adhérent"):
                 with st.form("new_adh"):
                     n, p = st.text_input("Nom"), st.text_input("Prénom")
@@ -148,15 +162,14 @@ elif menu == "🔐 Administration":
                         supabase.table("adherents").update({"est_actif": not u['est_actif']}).eq("id", u['id']).execute()
                         st.rerun()
                     if c3.button("🗑️", key=f"du_{u['id']}"):
-                        @st.dialog("Désactiver l'adhérent ?")
+                        @st.dialog("Désactiver ?")
                         def conf_u(uid):
-                            st.warning("L'historique sera conservé mais il ne pourra plus s'inscrire.")
                             if st.button("Confirmer"):
                                 supabase.table("adherents").update({"est_actif": False}).eq("id", uid).execute()
                                 st.rerun()
                         conf_u(u['id'])
 
-        # --- ONGLET 3 : LIEUX & HORAIRES (AVEC MODIFICATION) ---
+        # --- ONGLET 3 : LIEUX & HORAIRES ---
         with t3:
             at_ex = supabase.table("ateliers").select("lieu_id, horaire_id").execute().data
             l_used = {a['lieu_id'] for a in at_ex}
@@ -165,13 +178,12 @@ elif menu == "🔐 Administration":
             col_l, col_h = st.columns(2)
             with col_l:
                 st.subheader("📍 Lieux")
-                with st.expander("➕ Nouveau Lieu"):
+                with st.expander("➕ Nouveau"):
                     with st.form("fl"):
                         nl, cl = st.text_input("Nom"), st.number_input("Capacité", min_value=1, value=10)
                         if st.form_submit_button("Ajouter"):
                             supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cl, "est_actif": True}).execute()
                             st.rerun()
-                
                 for l in supabase.table("lieux").select("*").eq("est_actif", True).execute().data:
                     lock = l['id'] in l_used
                     with st.container(border=True):
@@ -187,13 +199,12 @@ elif menu == "🔐 Administration":
 
             with col_h:
                 st.subheader("⏰ Horaires")
-                with st.expander("➕ Nouvel Horaire"):
+                with st.expander("➕ Nouveau"):
                     with st.form("fh"):
                         nh = st.text_input("Libellé")
                         if st.form_submit_button("Ajouter"):
                             supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute()
                             st.rerun()
-                
                 for h in supabase.table("horaires").select("*").eq("est_actif", True).execute().data:
                     lock_h = h['id'] in h_used
                     with st.container(border=True):
@@ -208,16 +219,13 @@ elif menu == "🔐 Administration":
 
         # --- ONGLET 4 : SÉCURITÉ ---
         with t4:
-            st.subheader("⚙️ Code secret d'accès")
-            with st.form("security_form"):
-                old_p = st.text_input("Ancien code", type="password")
-                new_p = st.text_input("Nouveau code", type="password")
-                if st.form_submit_button("Mettre à jour le code"):
-                    if old_p == current_code:
-                        supabase.table("configuration").update({"secret_code": new_p}).eq("id", "main_config").execute()
+            st.subheader("⚙️ Code secret")
+            with st.form("sec"):
+                old, new = st.text_input("Ancien", type="password"), st.text_input("Nouveau", type="password")
+                if st.form_submit_button("Changer"):
+                    if old == current_code:
+                        supabase.table("configuration").update({"secret_code": new}).eq("id", "main_config").execute()
                         st.success("Code modifié !")
                         st.rerun()
-                    else:
-                        st.error("L'ancien code est faux.")
     else:
         st.info("Saisissez le code pour accéder à l'administration.")
