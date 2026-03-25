@@ -110,6 +110,73 @@ with tabs[1]:
         st.components.v1.html("<script>window.print();</script>", height=0)
 
 # --- ONGLET 3 : ADMIN ---
-with tabs[2]:
-    st.write("### Espace Gestion")
-    # Le générateur massif sera intégré ici à la prochaine étape
+# --- SECTION ADMINISTRATION ---
+if menu == "Administration":
+    st.header("🔐 Espace Administration")
+    
+    # Barre latérale pour le code
+    password = st.sidebar.text_input("Code d'accès", type="password")
+    
+    if password == "1234":
+        st.success("Accès autorisé")
+        
+        # Onglets pour organiser les formulaires
+        tab1, tab2, tab3 = st.tabs(["🏗️ Créer un Atelier", "👥 Gérer les Adhérents", "📍 Lieux & Horaires"])
+        
+        with tab1:
+            st.subheader("Nouvel Atelier")
+            with st.form("form_atelier"):
+                titre = st.text_input("Nom de l'atelier (ex: Éveil Musical)")
+                date_at = st.date_input("Date de l'atelier")
+                
+                # Récupération dynamique des lieux et horaires depuis la base
+                lieux_df = supabase.table("lieux").select("*").execute()
+                horaires_df = supabase.table("horaires").select("*").execute()
+                
+                lieu_options = {l['nom']: l['id'] for l in lieux_df.data}
+                horaire_options = {h['libelle']: h['id'] for h in horaires_df.data}
+                
+                choix_lieu = st.selectbox("Lieu", options=list(lieu_options.keys()))
+                choix_horaire = st.selectbox("Horaire", options=list(horaire_options.keys()))
+                
+                if st.form_submit_button("Publier l'atelier"):
+                    supabase.table("ateliers").insert({
+                        "titre": titre, 
+                        "date_atelier": str(date_at),
+                        "lieu_id": lieu_options[choix_lieu],
+                        "horaire_id": horaire_options[choix_horaire],
+                        "est_actif": True
+                    }).execute()
+                    st.balloons()
+                    st.success("Atelier créé !")
+
+        with tab2:
+            st.subheader("Ajouter une assistante maternelle")
+            with st.form("form_adherent"):
+                nouveau_nom = st.text_input("Nom de famille")
+                nouveau_prenom = st.text_input("Prénom")
+                if st.form_submit_button("Ajouter à la liste"):
+                    supabase.table("adherents").insert({
+                        "nom": nouveau_nom.upper(), 
+                        "prenom": nouveau_prenom.capitalize(),
+                        "est_actif": True
+                    }).execute()
+                    st.success(f"{nouveau_prenom} a été ajouté(e).")
+
+        with tab3:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Ajouter un Lieu")
+                nouveau_lieu = st.text_input("Nom du lieu (ex: Maison des Associations)")
+                if st.button("Ajouter le Lieu"):
+                    supabase.table("lieux").insert({"nom": nouveau_lieu}).execute()
+                    st.success(f"{nouveau_lieu} a été ajouté.")
+            with col2:
+                st.subheader("Ajouter un Horaire")
+                nouvel_horaire = st.text_input("Créneau (ex: 9h30 - 11h30)")
+                if st.button("Ajouter l'Horaire"):
+                    supabase.table("horaires").insert({"libelle": nouvel_horaire}).execute()
+                    st.success(f"{nouvel_horaire} a été ajouté.")
+
+    else:
+        st.warning("⚠️ Accès sécurisé : Veuillez entrer le code d'accès dans la barre latérale pour afficher les formulaires.")
