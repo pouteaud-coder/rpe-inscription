@@ -9,7 +9,7 @@ url = st.secrets["supabase_url"]
 key = st.secrets["supabase_key"]
 supabase: Client = create_client(url, key)
 
-# Récupération du code secret
+# Récupération sécurisée du code secret
 def get_secret_code():
     try:
         res = supabase.table("configuration").select("secret_code").eq("id", "main_config").execute()
@@ -28,7 +28,7 @@ menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "🔐 Administration
 if menu == "📝 Inscriptions":
     st.header("📍 Inscription aux Ateliers")
     
-    # On ne montre que les adhérents actifs pour s'inscrire
+    # On ne montre que les adhérents actifs
     res_adh = supabase.table("adherents").select("*").eq("est_actif", True).execute()
     noms_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
     
@@ -38,6 +38,7 @@ if menu == "📝 Inscriptions":
         # On ne montre que les ateliers actifs
         res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).execute()
         if res_at.data:
+            st.subheader("Ateliers disponibles")
             for at in res_at.data:
                 with st.expander(f"📅 {at['titre']} - {at['date_atelier']}"):
                     st.write(f"🏠 **Lieu :** {at['lieux']['nom']} | ⏰ **Horaire :** {at['horaires']['libelle']}")
@@ -45,7 +46,7 @@ if menu == "📝 Inscriptions":
                         supabase.table("inscriptions").insert({"adherent_id": noms_adh[choix_adh], "atelier_id": at['id']}).execute()
                         st.success("✅ Inscription validée !")
         else:
-            st.info("Aucun atelier disponible.")
+            st.info("Aucun atelier disponible pour le moment.")
 
 # --- SECTION 2 : ADMINISTRATION ---
 elif menu == "🔐 Administration":
@@ -62,9 +63,10 @@ elif menu == "🔐 Administration":
             def recover():
                 rescue = st.text_input("Code de secours (0000)", type="password")
                 new_c = st.text_input("Nouveau code", type="password")
-                if st.button("Valider"):
+                if st.button("Valider la réinitialisation"):
                     if rescue == "0000" and new_c:
                         supabase.table("configuration").update({"secret_code": new_c}).eq("id", "main_config").execute()
+                        st.success("Code modifié ! Reconnectez-vous.")
                         st.rerun()
             recover()
 
@@ -72,10 +74,9 @@ elif menu == "🔐 Administration":
         st.success("Session Administrateur Active")
         t1, t2, t3, t4 = st.tabs(["🏗️ Gestion des Ateliers", "👥 Gestion des Adhérents", "📍 Gestion Lieux et Horaires", "⚙️ Sécurité"])
         
-        # --- ONGLET 1 : ATELIERS ---
+        # --- ONGLET 1 : GESTION DES ATELIERS ---
         with t1:
             st.subheader("Publier un nouvel atelier")
-            # Filtrage pour ne proposer que le "neuf" et l'"actif"
             l_data = supabase.table("lieux").select("*").eq("est_actif", True).execute().data
             h_data = supabase.table("horaires").select("*").eq("est_actif", True).execute().data
             
@@ -91,82 +92,88 @@ elif menu == "🔐 Administration":
                         supabase.table("ateliers").insert({"titre": titre, "date_atelier": str(dat), "lieu_id": l_id, "horaire_id": h_id, "est_actif": True}).execute()
                         st.success("Atelier publié !")
             else:
-                st.warning("Configurez d'abord des Lieux et Horaires actifs.")
+                st.warning("⚠️ Aucun Lieu ou Horaire actif trouvé. Configurez-les d'abord.")
 
-        # --- ONGLET 2 : ADHÉRENTS (SUPPRESSION SÉCURISÉE PAR DÉSACTIVATION) ---
+        # --- ONGLET 2 : GESTION DES ADHÉRENTS ---
         with t2:
-            st.subheader("👥 Répertoire des Adhérents")
+            st.subheader("👥 Répertoire")
             with st.expander("➕ Ajouter un adhérent"):
                 with st.form("new_u"):
                     n, p = st.text_input("Nom"), st.text_input("Prénom")
-                    if st.form_submit_button("Créer"):
+                    if st.form_submit_button("Enregistrer"):
                         supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True, "est_admin": False}).execute()
                         st.rerun()
             
-            filtre = st.radio("Voir :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
-            query = supabase.table("adherents").select("*")
-            if filtre == "Actifs": query = query.eq("est_actif", True)
-            elif filtre == "Inactifs": query = query.eq("est_actif", False)
-            users = query.execute().data
+            filtre_adh = st.radio("Afficher adhérents :", ["Actifs", "Inactifs", "Tous"], horizontal=True)
+            q_adh = supabase.table("adherents").select("*")
+            if filtre_adh == "Actifs": q_adh = q_adh.eq("est_actif", True)
+            elif filtre_adh == "Inactifs": q_adh = q_adh.eq("est_actif", False)
+            users = q_adh.execute().data
             
             for u in users:
                 c1, c2, c3 = st.columns([4, 2, 1])
                 c1.write(f"**{u['nom']}** {u['prenom']}")
-                # Changement manuel du statut
                 if c2.button("✅ Actif" if u['est_actif'] else "❌ Inactif", key=f"u_{u['id']}"):
                     supabase.table("adherents").update({"est_actif": not u['est_actif']}).eq("id", u['id']).execute()
                     st.rerun()
-                # Bouton de "suppression" (qui désactive en fait)
-                if c3.button("🗑️", key=f"udel_{u['id']}", help="Désactiver définitivement"):
+                if c3.button("🗑️", key=f"udel_{u['id']}"):
                     @st.dialog(f"Désactiver {u['prenom']} ?")
-                    def confirm_u_off(uid):
-                        st.warning("L'adhérent ne pourra plus s'inscrire, mais son historique sera préservé.")
-                        if st.button("Confirmer la désactivation"):
+                    def conf_u(uid):
+                        st.warning("L'adhérent ne sera plus visible mais son historique sera conservé.")
+                        if st.button("Confirmer"):
                             supabase.table("adherents").update({"est_actif": False}).eq("id", uid).execute()
                             st.rerun()
-                    confirm_u_off(u['id'])
+                    conf_u(u['id'])
 
-        # --- ONGLET 3 : LIEUX & HORAIRES ---
+        # --- ONGLET 3 : GESTION LIEUX ET HORAIRES (AFFICHAGE FILTRÉ) ---
         with t3:
             col_l, col_h = st.columns(2)
+            
             with col_l:
                 st.subheader("📍 Lieux")
-                nl = st.text_input("Nom du lieu", key="add_lieu_input")
+                nl = st.text_input("Nouveau lieu")
                 if st.button("Ajouter Lieu"):
                     supabase.table("lieux").insert({"nom": nl, "est_actif": True}).execute()
                     st.rerun()
                 
-                all_l = supabase.table("lieux").select("*").execute().data
-                for l in all_l:
+                st.write("**Lieux actifs :**")
+                # ON NE MONTRE QUE LES ACTIFS DANS LA LISTE
+                active_l = supabase.table("lieux").select("*").eq("est_actif", True).execute().data
+                for l in active_l:
                     cl1, cl2 = st.columns([4, 1])
-                    cl1.write(f"{'✅' if l['est_actif'] else '❌'} {l['nom']}")
+                    cl1.write(f"- {l['nom']}")
                     if cl2.button("🗑️", key=f"dell_{l['id']}"):
                         supabase.table("lieux").update({"est_actif": False}).eq("id", l['id']).execute()
+                        st.success("Lieu masqué.")
                         st.rerun()
 
             with col_h:
                 st.subheader("⏰ Horaires")
-                nh = st.text_input("Créneau", key="add_hor_input")
+                nh = st.text_input("Nouveau créneau")
                 if st.button("Ajouter Horaire"):
                     supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute()
                     st.rerun()
                 
-                all_h = supabase.table("horaires").select("*").execute().data
-                for h in all_h:
+                st.write("**Horaires actifs :**")
+                # ON NE MONTRE QUE LES ACTIFS DANS LA LISTE
+                active_h = supabase.table("horaires").select("*").eq("est_actif", True).execute().data
+                for h in active_h:
                     ch1, ch2 = st.columns([4, 1])
-                    ch1.write(f"{'✅' if h['est_actif'] else '❌'} {h['libelle']}")
+                    ch1.write(f"- {h['libelle']}")
                     if ch2.button("🗑️", key=f"delh_{h['id']}"):
                         supabase.table("horaires").update({"est_actif": False}).eq("id", h['id']).execute()
+                        st.success("Horaire masqué.")
                         st.rerun()
 
         # --- ONGLET 4 : SÉCURITÉ ---
         with t4:
-            st.subheader("⚙️ Code secret")
-            with st.form("sec"):
-                old, new = st.text_input("Ancien", type="password"), st.text_input("Nouveau", type="password")
-                if st.form_submit_button("Changer"):
-                    if old == current_code:
-                        supabase.table("configuration").update({"secret_code": new}).eq("id", "main_config").execute()
+            st.subheader("⚙️ Paramètres")
+            with st.form("sec_f"):
+                o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
+                if st.form_submit_button("Changer le code secret"):
+                    if o == current_code:
+                        supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
                         st.rerun()
     else:
         st.info("Saisissez le code pour gérer l'application.")
+        
