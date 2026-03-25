@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 
-# 1. Configuration
+# 1. Configuration - Localisation en Français
 st.set_page_config(page_title="RPE Connect - Gestion", page_icon="🌿", layout="wide")
 
 url = st.secrets["supabase_url"]
@@ -50,31 +50,27 @@ if menu == "📝 Inscriptions":
 elif menu == "🔐 Administration":
     st.header("🔐 Espace de Gestion")
     
-    # --- BLOC DE CONNEXION AVEC SECOURS ---
     col_pass, col_forget = st.columns([2, 1])
     with col_pass:
         password_input = st.text_input("Code secret de session", type="password")
     
     with col_forget:
-        st.write(" ") # Alignement visuel
+        st.write(" ")
         if st.button("Code secret oublié ?"):
             @st.dialog("Récupération du code")
             def recover():
-                st.info("Utilisez le code de secours par défaut : 0000")
-                rescue = st.text_input("Code de secours", type="password")
-                new_c = st.text_input("Nouveau code secret souhaité", type="password")
-                if st.button("Réinitialiser le code"):
+                rescue = st.text_input("Code de secours (0000)", type="password")
+                new_c = st.text_input("Nouveau code", type="password")
+                if st.button("Réinitialiser"):
                     if rescue == "0000" and new_c:
                         supabase.table("configuration").update({"secret_code": new_c}).eq("id", "main_config").execute()
-                        st.success("Code modifié ! Veuillez vous reconnecter.")
+                        st.success("C'est fait ! Reconnectez-vous.")
                         st.rerun()
-                    else:
-                        st.error("Code de secours invalide.")
             recover()
 
     if password_input == current_code:
         st.success("Session Administrateur Active")
-        t1, t2, t3, t4 = st.tabs(["🏗️ Gestion", "👥 Adhérents", "📍 Lieux & Horaires", "⚙️ Sécurité"])
+        t1, t2, t3, t4 = st.tabs(["🏗️ Gestion Ateliers", "👥 Adhérents", "📍 Lieux & Horaires", "⚙️ Sécurité"])
         
         with t1:
             st.subheader("🚀 Générateur d'ateliers")
@@ -87,8 +83,9 @@ elif menu == "🔐 Administration":
             if l_data and h_data:
                 with st.expander("🛠️ Configurer une série"):
                     c1, c2 = st.columns(2)
+                    # Saisie en français (format DD/MM/YYYY)
                     d_debut = c1.date_input("Du", datetime.now(), format="DD/MM/YYYY")
-                    d_fin = c2.date_input("Au", datetime.now() + timedelta(days=14), format="DD/MM/YYYY")
+                    d_fin = c2.date_input("Au", d_debut + timedelta(days=14), format="DD/MM/YYYY")
                     jours = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
                     titre_base = st.text_input("Titre", value="Atelier Éveil")
                     
@@ -116,20 +113,28 @@ elif menu == "🔐 Administration":
 
                 if 'at_list' in st.session_state:
                     st.write("### 📋 Révision du tableau")
+                    st.info("💡 Vous pouvez supprimer une ligne en cliquant sur l'icône poubelle à droite de celle-ci.")
                     df_ed = pd.DataFrame(st.session_state['at_list'])
                     
-                    final_df = st.data_editor(df_ed, hide_index=True, use_container_width=True, column_config={
-                        "Date": st.column_config.TextColumn("Date", width="small", disabled=True),
-                        "Titre": st.column_config.TextColumn("Titre", width="large"),
-                        "Lieu": st.column_config.SelectboxColumn("Lieu", options=liste_lieux, width="medium"),
-                        "Horaire": st.column_config.SelectboxColumn("Horaire", options=liste_horaires, width="medium"),
-                        "Capacité": st.column_config.NumberColumn("Cap.", width="small", min_value=1),
-                        "Actif": st.column_config.CheckboxColumn("Actif", width="small"),
-                        "_raw_date": None
-                    })
+                    # num_rows="dynamic" permet la suppression de lignes
+                    final_df = st.data_editor(
+                        df_ed, 
+                        hide_index=True, 
+                        use_container_width=True,
+                        num_rows="dynamic",
+                        column_config={
+                            "Date": st.column_config.TextColumn("Date", disabled=True), # Auto-ajustement
+                            "Titre": st.column_config.TextColumn("Titre", width="large"),
+                            "Lieu": st.column_config.SelectboxColumn("Lieu", options=liste_lieux, width="medium"),
+                            "Horaire": st.column_config.SelectboxColumn("Horaire", options=liste_horaires, width="medium"),
+                            "Capacité": st.column_config.NumberColumn("Cap.", width="small", min_value=1),
+                            "Actif": st.column_config.CheckboxColumn("Actif", width="small"),
+                            "_raw_date": None
+                        }
+                    )
                     
                     c_ok, c_cancel = st.columns(2)
-                    if c_ok.button("✅ Valider et Enregistrer"):
+                    if c_ok.button("✅ Valider et Enregistrer définitivement"):
                         map_l = {l['nom']: l['id'] for l in l_data}
                         map_h = {h['libelle']: h['id'] for h in h_data}
                         to_db = [{"date_atelier": r['_raw_date'], "titre": r['Titre'], "lieu_id": map_l[r['Lieu']], 
@@ -140,7 +145,7 @@ elif menu == "🔐 Administration":
                         st.success("Planning enregistré !")
                         st.rerun()
                     
-                    if c_cancel.button("🗑️ Tout annuler"):
+                    if c_cancel.button("🗑️ Annuler toute la liste"):
                         del st.session_state['at_list']
                         st.rerun()
 
