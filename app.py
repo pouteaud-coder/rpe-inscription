@@ -14,7 +14,7 @@ def get_color(nom_lieu):
     hex_hash = hash_object.hexdigest()
     return f"#{hex_hash[:6]}"
 
-# --- STYLE CSS (Police + Boutons + Consultation) ---
+# --- STYLE CSS ---
 st.markdown("""
     <style>
     html, body, [class*="st-"] { font-size: 1.05rem !important; }
@@ -24,7 +24,6 @@ st.markdown("""
     .lieu-badge { padding: 4px 12px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.9rem; display: inline-block; margin: 2px 0; }
     .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
     
-    /* Style spécifique pour la liste des inscrits (Consultation) */
     .liste-inscrits { 
         font-size: 1.25rem !important; 
         font-weight: 600; 
@@ -34,17 +33,10 @@ st.markdown("""
     }
     .nb-enfants-focus { color: #1b5e20; font-weight: 800; font-size: 1.3rem; }
 
-    /* Décalage des boutons vers la droite en Administration */
-    .admin-btn-container {
-        margin-left: auto;
-        margin-right: 0;
-        width: 70%;      /* Plus large pour ne pas être étroit */
-        padding-top: 10px;
-    }
-    
-    /* Bouton stylisé */
+    /* Boutons alignés à gauche avec largeur contrôlée */
     .stButton button { 
         border-radius: 8px !important;
+        min-width: 250px !important;
     }
     
     button[data-baseweb="tab"] div { font-size: 1.1rem !important; }
@@ -156,7 +148,8 @@ elif menu == "📊 Suivi & Récap":
     with t1:
         choix = st.multiselect("Filtrer par personne :", liste_adh)
         ids = [dict_adh[n] for n in choix] if choix else list(dict_adh.values())
-        data = supabase.table("inscriptions").select("*, ateliers(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids).order("adherent_id").execute()
+        # Correction : On filtre pour ne garder que les ateliers actifs
+        data = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids).eq("ateliers.est_actif", True).order("adherent_id").execute()
         curr_u = ""
         for i in data.data:
             nom_u = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
@@ -182,7 +175,6 @@ elif menu == "📊 Suivi & Récap":
                 st.write("  <small>Aucun inscrit</small>", unsafe_allow_html=True)
             else:
                 for p in ins_at.data:
-                    # Affichage Nom + Enfants (Police agrandie)
                     st.markdown(f'<div class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -193,7 +185,7 @@ elif menu == "🔐 Administration":
     if pw == current_code:
         t_ad1, t_ad2, t_ad3, t_ad4 = st.tabs(["🏗️ Ateliers", "👥 Adhérents", "📍 Lieux/Horaires", "⚙️ Sécurité"])
         
-        with t_ad1: # ATELIERS
+        with t_ad1:
             l_raw = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
             h_raw = supabase.table("horaires").select("*").eq("est_actif", True).execute().data
             l_list = [l['nom'] for l in l_raw]; h_list = [h['libelle'] for h in h_raw]
@@ -206,8 +198,8 @@ elif menu == "🔐 Administration":
                 d2 = c_g2.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
                 js_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
                 
-                c_btn_gen = st.columns([0.3, 0.7])[1] # Utilisation de colonnes pour décaler à droite
-                if c_btn_gen.button("📊 Générer la liste des ateliers", use_container_width=True):
+                # Bouton aligné à gauche
+                if st.button("📊 Générer la liste des ateliers"):
                     tmp = []; curr = d1; js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                     while curr <= d2:
                         if js_fr[curr.weekday()] in js_sel:
@@ -226,8 +218,8 @@ elif menu == "🔐 Administration":
                     df_rep = pd.DataFrame([{"Date": format_date_fr_complete(a['date_atelier'], gras=True), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Actif": a['est_actif']} for a in at_rep])
                     edited_df = st.data_editor(df_rep, hide_index=True, use_container_width=True)
                     
-                    c_btn_save = st.columns([0.3, 0.7])[1] # Décalage à droite via colonnes
-                    if c_btn_save.button("💾 Sauvegarder les modifications du répertoire", use_container_width=True, type="primary"):
+                    # Bouton aligné à gauche
+                    if st.button("💾 Sauvegarder les modifications du répertoire", type="primary"):
                         for idx, row in edited_df.iterrows():
                             at_id = at_rep[idx]['id']
                             supabase.table("ateliers").update({"titre": row['Titre'], "est_actif": bool(row['Actif'])}).eq("id", at_id).execute()
