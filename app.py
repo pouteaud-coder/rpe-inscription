@@ -7,19 +7,21 @@ import re
 # 1. Configuration de la page
 st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
 
-# Style CSS Adaptatif et Épuré
+# Style CSS pour permettre le multi-ligne dans les headers d'accordéon
 st.markdown("""
     <style>
+    /* Permet au texte du label de l'accordéon de s'afficher sur plusieurs lignes */
+    .st-emotion-cache-p5m613 p {
+        white-space: normal !important;
+        line-height: 1.4 !important;
+    }
+    .line-1 { font-weight: bold; font-size: 1rem; color: #1b5e20; }
+    .line-2 { font-size: 0.85rem; color: #555; display: block; margin-top: 2px; }
+    
     .suivi-ligne { padding: 8px 0px; border-bottom: 1px solid #eee; display: flex; flex-wrap: wrap; align-items: center; font-size: 0.85rem; }
-    .date-info { font-weight: 600; color: #444; width: 140px; }
-    .titre-info { flex-grow: 1; color: #222; }
-    .badge-fin { font-size: 0.7rem; padding: 1px 5px; border: 1px solid #ddd; border-radius: 3px; color: #777; margin-left: 5px; display: inline-block; }
-    .nb-enfants { font-weight: bold; color: #2e7d32; margin-left: auto; padding-left: 10px; }
     .nom-header { color: #1b5e20; border-bottom: 1px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-size: 1rem; font-weight: bold; }
-    .info-secondaire { font-size: 0.8rem; color: #666; margin-top: 2px; }
+    
     @media (max-width: 768px) {
-        .date-info { width: 100%; margin-bottom: 2px; font-size: 0.8rem; }
-        .nb-enfants { width: 100%; margin-left: 0; margin-top: 5px; text-align: left; background: #f9f9f9; padding: 2px 5px; border-radius: 4px; }
         .stButton button { width: 100%; }
     }
     </style>
@@ -99,15 +101,19 @@ if menu == "📝 Inscriptions":
             restantes = at['capacite_max'] - total_occ
             
             est_ouvert = st.session_state['u_opened_at'] == at['id']
-            # Affichage de la date complète
-            date_full = format_date_fr_complete(at['date_atelier'])
-            label = f"{date_full} - {at['titre']} ({restantes} pl.)"
+            date_f = format_date_fr_complete(at['date_atelier'])
             
-            with st.expander(label, expanded=est_ouvert):
-                # Ligne d'info secondaire (Lieu et Horaire)
-                st.markdown(f"<div class='info-secondaire'>📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']}</div>", unsafe_allow_html=True)
-                st.write("")
-                
+            # CONSTRUCTION DU LABEL SUR DEUX LIGNES VIA LE PARAMÈTRE LABEL
+            # On utilise une astuce : le label accepte le markdown simple.
+            # Les balises HTML ne passent pas toujours dans le label Streamlit, 
+            # on utilise donc un formatage clair avec des sauts de ligne si supportés ou un séparateur visuel fort.
+            label_titre = f"📅 {date_f} — {at['titre']}"
+            label_details = f"📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | 👥 {restantes} places restantes"
+            
+            # On combine les deux avec un caractère de saut de ligne spécial
+            full_label = f"{label_titre}\n{label_details}"
+            
+            with st.expander(full_label, expanded=est_ouvert):
                 if res_ins.data:
                     for i in res_ins.data:
                         c1, c2, c3 = st.columns([3, 2, 1])
@@ -122,7 +128,6 @@ if menu == "📝 Inscriptions":
                 st.markdown("---")
                 c_q, c_e, c_v = st.columns([2, 2, 1])
                 
-                # AUTO-SÉLECTION : Si l'utilisateur s'est identifié, son nom est l'index par défaut
                 try: default_idx = (liste_adh.index(user_principal) + 1)
                 except: default_idx = 0
                 
@@ -167,7 +172,7 @@ elif menu == "📊 Suivi & Récap":
         for a_id in at_ids:
             a_info = next(at for at in ats_raw.data if at['id'] == a_id)
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a_id).execute()
-            st.markdown(f"**{format_date_fr_complete(a_info['date_atelier'])} — {a_info['titre']}** <small>({a_info['lieux']['nom']} | {a_info['horaires']['libelle']})</small>", unsafe_allow_html=True)
+            st.markdown(f"**{format_date_fr_complete(a_info['date_atelier'])} | {a_info['lieux']['nom']} | {a_info['horaires']['libelle']}**<br><small>{a_info['titre']}</small>", unsafe_allow_html=True)
             if not ins_at.data: st.write("<small style='color:gray; padding-left:20px;'>Aucun inscrit</small>", unsafe_allow_html=True)
             else:
                 for p in ins_at.data:
@@ -175,7 +180,7 @@ elif menu == "📊 Suivi & Récap":
             st.write("")
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION (Inchangée)
+# SECTION 🔐 ADMINISTRATION (Inchangée pour la sécurité)
 # ==========================================
 elif menu == "🔐 Administration":
     pw = st.text_input("Code secret", type="password")
@@ -269,4 +274,3 @@ elif menu == "🔐 Administration":
                         st.success("Modifié !"); st.rerun()
                     else: st.error("Ancien code incorrect.")
     else: st.info("Saisissez le code secret.")
-    
