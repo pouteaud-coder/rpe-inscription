@@ -26,17 +26,20 @@ st.markdown("""
     
     /* Style spécifique pour la liste des inscrits (Consultation) */
     .liste-inscrits { 
-        font-size: 1.15rem !important; 
-        font-weight: 500; 
+        font-size: 1.25rem !important; 
+        font-weight: 600; 
         margin-left: 15px;
         line-height: 1.8;
+        color: #333;
     }
-    .nb-enfants-focus { color: #1b5e20; font-weight: bold; }
+    .nb-enfants-focus { color: #1b5e20; font-weight: 800; font-size: 1.3rem; }
 
     /* Décalage des boutons vers la droite en Administration */
     .admin-btn-container {
-        margin-left: 20%; /* Décalage vers la droite */
-        width: 60%;      /* Largeur contrôlée */
+        margin-left: auto;
+        margin-right: 0;
+        width: 70%;      /* Plus large pour ne pas être étroit */
+        padding-top: 10px;
     }
     
     /* Bouton stylisé */
@@ -158,7 +161,7 @@ elif menu == "📊 Suivi & Récap":
         for i in data.data:
             nom_u = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
             if nom_u != curr_u:
-                st.markdown(f<div class="nom-header">{nom_u}</div>, unsafe_allow_html=True)
+                st.markdown(f'<div class="nom-header">{nom_u}</div>', unsafe_allow_html=True)
                 curr_u = nom_u
             at = i['ateliers']
             c_l = get_color(at['lieux']['nom'])
@@ -179,7 +182,7 @@ elif menu == "📊 Suivi & Récap":
                 st.write("  <small>Aucun inscrit</small>", unsafe_allow_html=True)
             else:
                 for p in ins_at.data:
-                    # Affichage plus grand et ciblé pour les inscrits
+                    # Affichage Nom + Enfants (Police agrandie)
                     st.markdown(f'<div class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -203,16 +206,14 @@ elif menu == "🔐 Administration":
                 d2 = c_g2.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
                 js_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
                 
-                # Bouton décalé à droite
-                st.markdown('<div class="admin-btn-container">', unsafe_allow_html=True)
-                if st.button("📊 Générer la liste des ateliers", use_container_width=True):
+                c_btn_gen = st.columns([0.3, 0.7])[1] # Utilisation de colonnes pour décaler à droite
+                if c_btn_gen.button("📊 Générer la liste des ateliers", use_container_width=True):
                     tmp = []; curr = d1; js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                     while curr <= d2:
                         if js_fr[curr.weekday()] in js_sel:
                             tmp.append({"Date": format_date_fr_complete(curr, gras=True), "Titre": "", "Lieu": l_list[0] if l_list else "", "Horaire": h_list[0] if h_list else "", "Capacité": 10, "Actif": True})
                         curr += timedelta(days=1)
                     st.session_state['at_list'] = tmp; st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
 
                 if st.session_state['at_list']:
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, use_container_width=True)
@@ -225,14 +226,12 @@ elif menu == "🔐 Administration":
                     df_rep = pd.DataFrame([{"Date": format_date_fr_complete(a['date_atelier'], gras=True), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Actif": a['est_actif']} for a in at_rep])
                     edited_df = st.data_editor(df_rep, hide_index=True, use_container_width=True)
                     
-                    # Bouton décalé à droite
-                    st.markdown('<div class="admin-btn-container">', unsafe_allow_html=True)
-                    if st.button("💾 Sauvegarder les modifications du répertoire", use_container_width=True, type="primary"):
+                    c_btn_save = st.columns([0.3, 0.7])[1] # Décalage à droite via colonnes
+                    if c_btn_save.button("💾 Sauvegarder les modifications du répertoire", use_container_width=True, type="primary"):
                         for idx, row in edited_df.iterrows():
                             at_id = at_rep[idx]['id']
                             supabase.table("ateliers").update({"titre": row['Titre'], "est_actif": bool(row['Actif'])}).eq("id", at_id).execute()
                         st.success("Répertoire mis à jour !"); st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
 
         with t_ad2: # ADHÉRENTS
             with st.form("add_adh"):
