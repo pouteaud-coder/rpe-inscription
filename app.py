@@ -31,19 +31,14 @@ def parse_date_fr_to_iso(date_str):
     date_str = str(date_str).lower().strip()
     mois_map = {"janvier":"01", "février":"02", "mars":"03", "avril":"04", "mai":"05", "juin":"06", 
                 "juillet":"07", "août":"08", "septembre":"09", "octobre":"10", "novembre":"11", "décembre":"12"}
-    
-    # Format textuel : "Jeudi 2 avril 2026"
     match_txt = re.search(r"(\d{1,2})\s+([a-zéû]+)\s+(\d{4})", date_str)
     if match_txt:
         d, m, y = match_txt.groups()
         return f"{y}-{mois_map.get(m, '01')}-{d.zfill(2)}"
-    
-    # Format numérique : "02/04/2026"
     match_num = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", date_str)
     if match_num:
         d, m, y = match_num.groups()
         return f"{y}-{m.zfill(2)}-{d.zfill(2)}"
-    
     return str(date.today())
 
 # --- INITIALISATION SESSION ---
@@ -71,40 +66,59 @@ if menu == "📝 Inscriptions":
         today_str = str(date.today())
         
         # Récupération des ateliers futurs
-        res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
+        res_at = supabase.table("ateliers").select("*, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
         
         # Récupération des inscriptions de l'utilisateur
-        mes_inscriptions = supabase.table("inscriptions").select("atelier_id").eq("adherent_id", id_adh).execute()
-        deja_inscrit_ids = [i['atelier_id'] for i in mes_inscriptions.data]
+        mes_inscriptions = supabase.table("inscriptions").select("atelier_id, nb_enfants").eq("adherent_id", id_adh).execute()
+        deja_inscrit_dict = {i['atelier_id']: i['nb_enfants'] for i in mes_inscriptions.data}
 
         if not res_at.data:
             st.info("Aucun atelier n'est programmé pour le moment.")
         else:
             st.subheader("📅 Ateliers disponibles")
             for at in res_at.data:
-                # Calcul des places
-                res_count = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", at['id']).execute()
-                occupées = res_count.count if res_count.count else 0
-                restantes = at['capacite_max'] - occupées
+                # Calcul des places : on somme (1 adulte + nb_enfants) pour chaque ligne d'inscription
+                res_count = supabase.table("inscriptions").select("nb_enfants").eq("atelier_id", at['id']).execute()
+                # Chaque ligne d'inscription = 1 adulte + X enfants
+                total_occupé = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_count.data])
+                restantes = at['capacite_max'] - total_occupé
                 
                 date_txt = format_date_fr(at['date_atelier'])
-                statut = f"({restantes} places restantes)" if restantes > 0 else "(COMPLET)"
+                lieu_h = f"{at['lieux']['nom']} | {at['horaires']['libelle']}"
+                statut = f"({restantes} places)" if restantes > 0 else "(COMPLET)"
                 
-                with st.expander(f"📅 {date_txt} - {at['titre']} {statut}"):
-                    st.write(f"📍 **Lieu :** {at['lieux']['nom']} | ⏰ **Horaire :** {at['horaires']['libelle']}")
-                    
-                    if at['id'] in deja_inscrit_ids:
-                        st.success("✅ Vous êtes déjà inscrit.")
+                with st.expander(f"📅 {date_txt} - {at['titre']} | {lieu_h} {statut}"):
+                    if at['id'] in deja_inscrit_dict:
+                        nb_e_deja = deja_inscrit_dict[at['id']]
+                        st.success(f"✅ Inscrit avec {nb_e_deja} enfant(s).")
                         if st.button("Se désister", key=f"unreg_{at['id']}"):
                             supabase.table("inscriptions").delete().eq("adherent_id", id_adh).eq("atelier_id", at['id']).execute()
                             st.rerun()
                     elif restantes <= 0:
-                        st.error("Atelier complet.")
+                        st.error("Désolé, cet atelier est complet (jauge maximale atteinte).")
                     else:
-                        if st.button("Confirmer l'inscription", key=f"reg_{at['id']}", type="primary"):
-                            supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id']}).execute()
-                            st.balloons()
-                            st.rerun()
+                        st.write("---")
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            mode_enfant = st.radio("Nombre d'enfants :", ["1", "2", "3", "4", "Plus..."], horizontal=True, key=f"mode_{at['id']}")
+                        with col2:
+                            if mode_enfant == "Plus...":
+                                nb_enfants = st.number_input("Précisez :", min_value=5, max_value=20, value=5, key=f"num_{at['id']}")
+                            else:
+                                nb_enfants = int(mode_enfant)
+                        
+                        total_demande = 1 + nb_enfants
+                        if total_demande > restantes:
+                            st.warning(f"⚠️ Pas assez de places (il reste {restantes} places, vous en demandez {total_demande}).")
+                        else:
+                            if st.button("Confirmer l'inscription", key=f"reg_{at['id']}", type="primary"):
+                                supabase.table("inscriptions").insert({
+                                    "adherent_id": id_adh, 
+                                    "atelier_id": at['id'],
+                                    "nb_enfants": nb_enfants
+                                }).execute()
+                                st.balloons()
+                                st.rerun()
 
 # ==========================================
 # SECTION 🔐 ADMINISTRATION
@@ -153,7 +167,6 @@ elif menu == "🔐 Administration":
 
                 if st.session_state['at_list']:
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, num_rows="dynamic", column_config=conf, key="ed_gen")
-                    
                     c_up, c_plus, c_save, c_del = st.columns([1.5, 1.5, 1.5, 1.5])
                     
                     if c_up.button("🔄 Rafraîchir données"):
@@ -223,7 +236,6 @@ elif menu == "🔐 Administration":
                             for at_id in ids:
                                 check = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", at_id).execute()
                                 total_inscrit += check.count if check.count else 0
-                            
                             if total_inscrit > 0:
                                 st.error(f"⚠️ {total_inscrit} inscription(s) en cours !")
                                 code = st.text_input("Code secret pour confirmer :", type="password")
