@@ -23,50 +23,18 @@ def get_color(nom_lieu):
         if clé in nom_upper: return couleur
     return MAP_COULEURS["DEFAULT"]
 
-# --- STYLE CSS (Optimisation Mobile, Visuelle et Taille de Police) ---
+# --- STYLE CSS ---
 st.markdown("""
     <style>
-    /* 1. Augmentation globale de la police (Projet) */
-    html, body, [class*="st-"] {
-        font-size: 1.05rem !important; 
-    }
-    
-    /* 2. Augmentation spécifique du menu de navigation (Sidebar) */
-    [data-testid="stSidebarNav"] span {
-        font-size: 1.1rem !important;
-        font-weight: 500;
-    }
-    .stRadio div[role="radiogroup"] label {
-        font-size: 1.2rem !important;
-        padding-bottom: 10px;
-    }
-
-    /* 3. Ajustements des éléments de texte et badges */
+    html, body, [class*="st-"] { font-size: 1.05rem !important; }
+    [data-testid="stSidebarNav"] span { font-size: 1.1rem !important; font-weight: 500; }
+    .stRadio div[role="radiogroup"] label { font-size: 1.2rem !important; padding-bottom: 10px; }
     .st-emotion-cache-p5m613 p { white-space: normal !important; line-height: 1.5 !important; font-size: 1.05rem !important; }
     .lieu-badge { padding: 3px 10px; border-radius: 4px; color: white; font-weight: bold; font-size: 0.9rem; display: inline-block; }
     .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
-    
-    /* 4. Force l'alignement horizontal Mobile (Nom + Poubelle) */
-    [data-testid="column"] {
-        min-width: 0px !important;
-        flex-basis: auto !important;
-    }
-    
-    /* 5. Bouton poubelle ultra compact */
-    .stButton button {
-        padding: 0px 5px !important;
-        height: 30px !important;
-        min-height: 30px !important;
-        width: 38px !important;
-        border: none !important;
-        background-color: transparent !important;
-        font-size: 1.2rem !important;
-    }
-
-    /* 6. Taille des titres d'onglets (Tabs) */
-    button[data-baseweb="tab"] div {
-        font-size: 1.1rem !important;
-    }
+    [data-testid="column"] { min-width: 0px !important; flex-basis: auto !important; }
+    .stButton button { padding: 0px 5px !important; height: 30px !important; min-height: 30px !important; width: 38px !important; border: none !important; background-color: transparent !important; font-size: 1.2rem !important; }
+    button[data-baseweb="tab"] div { font-size: 1.1rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -187,16 +155,33 @@ elif menu == "📊 Suivi & Récap":
             st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
 
     with t2:
-        ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(date.today())).order("date_atelier").execute()
+        # --- NOUVEAUX FILTRES DE DATE ---
+        c_d1, c_d2 = st.columns(2)
+        d_start = c_d1.date_input("Du", date.today())
+        d_end = c_d2.date_input("Au", d_start + timedelta(days=30))
+        
+        # Requête filtrée par dates et seulement les actifs
+        ats_raw = supabase.table("ateliers")\
+            .select("*, lieux(nom), horaires(libelle)")\
+            .eq("est_actif", True)\
+            .gte("date_atelier", str(d_start))\
+            .lte("date_atelier", str(d_end))\
+            .order("date_atelier").execute()
+            
+        if not ats_raw.data:
+            st.info("Aucun atelier actif trouvé pour cette période.")
+        
         for a in ats_raw.data:
             c_l = get_color(a['lieux']['nom'])
             st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | {a['horaires']['libelle']}", unsafe_allow_html=True)
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
+            if not ins_at.data:
+                st.write("  <small>Aucun inscrit</small>", unsafe_allow_html=True)
             for p in ins_at.data:
                 st.write(f"  <small>• {p['adherents']['prenom']} {p['adherents']['nom']} ({p['nb_enfants']} enf.)</small>", unsafe_allow_html=True)
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION
+# SECTION 🔐 ADMINISTRATION (Inchangée)
 # ==========================================
 elif menu == "🔐 Administration":
     pw = st.text_input("Code secret", type="password")
