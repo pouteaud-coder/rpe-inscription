@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import re
 
@@ -49,6 +49,7 @@ if menu == "📝 Inscriptions":
     noms_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
     choix_adh = st.selectbox("Sélectionnez votre nom", ["Choisir..."] + list(noms_adh.keys()))
     if choix_adh != "Choisir...":
+        # Tri par date pour les utilisateurs aussi
         res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).order("date_atelier").execute()
         for at in res_at.data:
             with st.expander(f"📅 {format_date_fr(at['date_atelier'])} - {at['titre']}"):
@@ -111,8 +112,6 @@ elif menu == "🔐 Administration":
 
                 if st.session_state['at_list']:
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, num_rows="dynamic", column_config=conf, key="ed_gen")
-                    
-                    # Capacité Automatique
                     for i, row in res_gen.iterrows():
                         if i < len(st.session_state['at_list']):
                             if row['Lieu'] != st.session_state['at_list'][i]['Lieu']:
@@ -138,12 +137,32 @@ elif menu == "🔐 Administration":
                             st.session_state['at_list'] = new_list; st.rerun()
 
             else:
-                # RÉPERTOIRE AVEC FILTRES
-                f_r = st.radio("Filtre d'affichage :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
+                # RÉPERTOIRE AVEC FILTRES ET TRI
+                st.subheader("🔍 Filtres de recherche")
+                c_f1, c_f2, c_f3 = st.columns([2, 1.5, 1.5])
+                
+                with c_f1:
+                    f_r = st.radio("Statut :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
+                
+                with c_f2:
+                    date_debut = st.date_input("Du :", date(date.today().year, date.today().month, 1), format="DD/MM/YYYY")
+                
+                with c_f3:
+                    # Par défaut à la fin du mois
+                    next_month = date.today().replace(day=28) + timedelta(days=4)
+                    last_day = next_month - timedelta(days=next_month.day)
+                    date_fin = st.date_input("Au :", last_day, format="DD/MM/YYYY")
+
                 query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)")
+                
+                # Application des filtres
                 if f_r == "Actifs": query = query.eq("est_actif", True)
                 elif f_r == "Inactifs": query = query.eq("est_actif", False)
-                db_d = query.order("date_atelier", desc=True).execute().data
+                
+                query = query.gte("date_atelier", str(date_debut)).lte("date_atelier", str(date_fin))
+                
+                # Tri chronologique (order par date_atelier ASC)
+                db_d = query.order("date_atelier", desc=False).execute().data
                 
                 if db_d:
                     df_r = pd.DataFrame([{"Select": False, "ID": a['id'], "Date": format_date_fr(a['date_atelier']), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Capacité": a['capacite_max'], "Actif": a['est_actif']} for a in db_d])
@@ -151,7 +170,6 @@ elif menu == "🔐 Administration":
                     
                     c1, c2 = st.columns([1, 4])
                     if c1.button("💾 Sauvegarder"):
-                        # Filtrer les lignes non cochées pour éviter d'update des lignes supprimées
                         rows_to_update = res_r[res_r['Select'] == False]
                         for _, row in rows_to_update.iterrows():
                             try:
@@ -159,7 +177,7 @@ elif menu == "🔐 Administration":
                                     "titre": row['Titre'], "lieu_id": map_l_id[row['Lieu']], 
                                     "horaire_id": map_h_id[row['Horaire']], "capacite_max": row['Capacité'], "est_actif": row['Actif']
                                 }).eq("id", int(row['ID'])).execute()
-                            except: pass # Ignore les lignes problématiques
+                            except: pass
                         st.success("Modifications enregistrées !"); st.rerun()
                     
                     selected_rows = res_r[res_r['Select'] == True]
@@ -186,8 +204,10 @@ elif menu == "🔐 Administration":
                                     if st.button("Confirmer"):
                                         supabase.table("ateliers").delete().in_("id", ids).execute(); st.rerun()
                             multi_del(selected_rows)
+                else:
+                    st.info("Aucun atelier trouvé pour cette période.")
 
-        # --- AUTRES ONGLETS ---
+        # --- ONGLETS ADHÉRENTS / LIEUX / SÉCURITÉ ---
         with t2:
             with st.form("f_adh"):
                 n, p = st.text_input("Nom"), st.text_input("Prénom")
