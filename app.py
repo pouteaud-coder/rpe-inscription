@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import re
+import calendar
 
 # 1. Configuration
 st.set_page_config(page_title="RPE Connect - Gestion Master", page_icon="🌿", layout="wide")
@@ -49,7 +50,6 @@ if menu == "📝 Inscriptions":
     noms_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
     choix_adh = st.selectbox("Sélectionnez votre nom", ["Choisir..."] + list(noms_adh.keys()))
     if choix_adh != "Choisir...":
-        # Tri par date pour les utilisateurs aussi
         res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).order("date_atelier").execute()
         for at in res_at.data:
             with st.expander(f"📅 {format_date_fr(at['date_atelier'])} - {at['titre']}"):
@@ -137,31 +137,34 @@ elif menu == "🔐 Administration":
                             st.session_state['at_list'] = new_list; st.rerun()
 
             else:
-                # RÉPERTOIRE AVEC FILTRES ET TRI
+                # RÉPERTOIRE AVEC FILTRES CALCULES N-2 / N+2
+                today = date.today()
+                
+                # Calcul Début : 1er jour de (Mois actuel - 2 mois)
+                # On utilise timedelta pour reculer d'environ 60 jours puis on force le jour à 1
+                start_raw = (today.replace(day=1) - timedelta(days=45)).replace(day=1) # M-1
+                default_start = (start_raw - timedelta(days=1)).replace(day=1) # M-2
+                
+                # Calcul Fin : Dernier jour de (Mois actuel + 2 mois)
+                # On avance de 3 mois et on recule d'un jour par rapport au 1er
+                month_plus_3 = (today.replace(day=1) + timedelta(days=95)).replace(day=1)
+                default_end = month_plus_3 - timedelta(days=1)
+
                 st.subheader("🔍 Filtres de recherche")
                 c_f1, c_f2, c_f3 = st.columns([2, 1.5, 1.5])
                 
                 with c_f1:
                     f_r = st.radio("Statut :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
-                
                 with c_f2:
-                    date_debut = st.date_input("Du :", date(date.today().year, date.today().month, 1), format="DD/MM/YYYY")
-                
+                    date_debut = st.date_input("Du :", default_start, format="DD/MM/YYYY")
                 with c_f3:
-                    # Par défaut à la fin du mois
-                    next_month = date.today().replace(day=28) + timedelta(days=4)
-                    last_day = next_month - timedelta(days=next_month.day)
-                    date_fin = st.date_input("Au :", last_day, format="DD/MM/YYYY")
+                    date_fin = st.date_input("Au :", default_end, format="DD/MM/YYYY")
 
                 query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)")
-                
-                # Application des filtres
                 if f_r == "Actifs": query = query.eq("est_actif", True)
                 elif f_r == "Inactifs": query = query.eq("est_actif", False)
                 
                 query = query.gte("date_atelier", str(date_debut)).lte("date_atelier", str(date_fin))
-                
-                # Tri chronologique (order par date_atelier ASC)
                 db_d = query.order("date_atelier", desc=False).execute().data
                 
                 if db_d:
