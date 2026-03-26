@@ -14,33 +14,30 @@ def get_color(nom_lieu):
     hex_hash = hash_object.hexdigest()
     return f"#{hex_hash[:6]}"
 
-# --- STYLE CSS AJUSTÉ ---
+# --- STYLE CSS AJUSTÉ (Texte plus petit que la date) ---
 st.markdown("""
     <style>
-    html, body, [class*="st-"] { font-size: 1.05rem !important; }
+    html, body, [class*="st-"] { font-size: 1.05rem !important; } /* Taille de base (Dates) */
     [data-testid="stSidebarNav"] span { font-size: 1.1rem !important; font-weight: 500; }
-    .stRadio div[role="radiogroup"] label { font-size: 1.2rem !important; padding-bottom: 10px; }
     
     .lieu-badge { padding: 4px 12px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.9rem; display: inline-block; margin: 2px 0; }
     .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
     
-    /* Taille intermédiaire pour la liste des inscrits */
+    /* Taille discrète pour les inscrits (plus petite que la date) */
     .liste-inscrits { 
-        font-size: 1.1rem !important; /* Réduit par rapport au 1.25rem précédent */
-        font-weight: 500; 
-        margin-left: 15px;
-        line-height: 1.6;
-        color: #333;
+        font-size: 0.95rem !important; 
+        font-weight: 400; 
+        margin-left: 20px;
+        line-height: 1.4;
+        color: #555;
     }
-    .nb-enfants-focus { color: #1b5e20; font-weight: 700; font-size: 1.15rem; }
+    .nb-enfants-focus { color: #2e7d32; font-weight: 600; font-size: 0.95rem; }
 
     /* Boutons alignés à gauche */
     .stButton button { 
         border-radius: 8px !important;
-        min-width: 220px !important;
+        min-width: 200px !important;
     }
-    
-    button[data-baseweb="tab"] div { font-size: 1.1rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -149,7 +146,6 @@ elif menu == "📊 Suivi & Récap":
     with t1:
         choix = st.multiselect("Filtrer par personne :", liste_adh)
         ids = [dict_adh[n] for n in choix] if choix else list(dict_adh.values())
-        # Filtrage pour ne garder que les ateliers actifs
         data = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids).eq("ateliers.est_actif", True).order("adherent_id").execute()
         curr_u = ""
         for i in data.data:
@@ -176,7 +172,7 @@ elif menu == "📊 Suivi & Récap":
                 st.write("  <small>Aucun inscrit</small>", unsafe_allow_html=True)
             else:
                 for p in ins_at.data:
-                    # Taille intermédiaire Nom + Enfants
+                    # Rendu final : Texte discret et élégant
                     st.markdown(f'<div class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -200,7 +196,7 @@ elif menu == "🔐 Administration":
                 d2 = c_g2.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
                 js_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
                 
-                if st.button("📊 Générer la liste des ateliers"):
+                if st.button("📊 Générer la liste"):
                     tmp = []; curr = d1; js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                     while curr <= d2:
                         if js_fr[curr.weekday()] in js_sel:
@@ -210,7 +206,7 @@ elif menu == "🔐 Administration":
 
                 if st.session_state['at_list']:
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, use_container_width=True)
-                    if st.button("✅ Enregistrer définitivement"):
+                    if st.button("✅ Enregistrer"):
                         to_db = [{"date_atelier": parse_date_fr_to_iso(r['Date']), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": int(r['Capacité']), "est_actif": True} for _, r in res_gen.iterrows() if r['Titre'] != ""]
                         if to_db: supabase.table("ateliers").insert(to_db).execute(); st.session_state['at_list'] = []; st.rerun()
             else: 
@@ -219,11 +215,11 @@ elif menu == "🔐 Administration":
                     df_rep = pd.DataFrame([{"Date": format_date_fr_complete(a['date_atelier'], gras=True), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Actif": a['est_actif']} for a in at_rep])
                     edited_df = st.data_editor(df_rep, hide_index=True, use_container_width=True)
                     
-                    if st.button("💾 Sauvegarder les modifications du répertoire", type="primary"):
+                    if st.button("💾 Sauvegarder", type="primary"):
                         for idx, row in edited_df.iterrows():
                             at_id = at_rep[idx]['id']
                             supabase.table("ateliers").update({"titre": row['Titre'], "est_actif": bool(row['Actif'])}).eq("id", at_id).execute()
-                        st.success("Répertoire mis à jour !"); st.rerun()
+                        st.success("Mis à jour !"); st.rerun()
 
         with t_ad2: # ADHÉRENTS
             with st.form("add_adh"):
