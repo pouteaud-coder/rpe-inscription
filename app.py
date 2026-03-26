@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from supabase import create_client, Client
 import re
 
-# 1. Configuration - Largeur maximale
+# 1. Configuration
 st.set_page_config(page_title="RPE Connect - Gestion Master", page_icon="🌿", layout="wide")
 
 url = st.secrets["supabase_url"]
@@ -32,8 +32,6 @@ def parse_date_flexible(date_str):
     if match:
         day, month, year = match.groups()
         return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
-        return date_str
     return str(datetime.now().date())
 
 # --- INITIALISATION SESSION ---
@@ -45,27 +43,20 @@ current_code = get_secret_code()
 st.title("🌿 Système RPE Connect")
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "🔐 Administration"])
 
-# --- SECTION 1 : INSCRIPTION ---
 if menu == "📝 Inscriptions":
     st.header("📍 Inscription aux Ateliers")
     res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").execute()
     noms_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
     choix_adh = st.selectbox("Sélectionnez votre nom", ["Choisir..."] + list(noms_adh.keys()))
-    
     if choix_adh != "Choisir...":
         res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).order("date_atelier").execute()
-        if res_at.data:
-            for at in res_at.data:
-                with st.expander(f"📅 {format_date_fr(at['date_atelier'])} - {at['titre']}"):
-                    st.write(f"🏠 **Lieu :** {at['lieux']['nom']} | ⏰ **Horaire :** {at['horaires']['libelle']}")
-                    if st.button("Confirmer l'inscription", key=f"reg_{at['id']}"):
-                        supabase.table("inscriptions").insert({"adherent_id": noms_adh[choix_adh], "atelier_id": at['id']}).execute()
-                        st.success("✅ Inscription validée !")
+        for at in res_at.data:
+            with st.expander(f"📅 {format_date_fr(at['date_atelier'])} - {at['titre']}"):
+                if st.button("Confirmer l'inscription", key=f"reg_{at['id']}"):
+                    supabase.table("inscriptions").insert({"adherent_id": noms_adh[choix_adh], "atelier_id": at['id']}).execute()
+                    st.success("✅ Inscription validée !")
 
-# --- SECTION 2 : ADMINISTRATION ---
 elif menu == "🔐 Administration":
-    st.header("🔐 Espace de Gestion")
-    
     col_in, col_ou = st.columns([3, 1])
     with col_in: password_input = st.text_input("Code secret d'accès", type="password")
     with col_ou:
@@ -73,8 +64,7 @@ elif menu == "🔐 Administration":
         if st.button("Code oublié ?"):
             @st.dialog("Récupération")
             def recover():
-                r = st.text_input("Code de secours (0000)", type="password")
-                n = st.text_input("Nouveau code")
+                r, n = st.text_input("Secours (0000)", type="password"), st.text_input("Nouveau code")
                 if st.button("Valider") and r == "0000":
                     supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
                     st.rerun()
@@ -99,6 +89,7 @@ elif menu == "🔐 Administration":
                 "Horaire": st.column_config.SelectboxColumn("Horaire", options=h_list, width=130),
                 "Capacité": st.column_config.NumberColumn("Cap.", width=60),
                 "Actif": st.column_config.CheckboxColumn("Actif", width=60),
+                "Select": st.column_config.CheckboxColumn("Sél.", width=50),
                 "_raw_date": None, "ID": None
             }
 
@@ -107,7 +98,7 @@ elif menu == "🔐 Administration":
                     d1 = st.date_input("Début", datetime.now(), format="DD/MM/YYYY")
                     d2 = st.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
                     js_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
-                    if st.button("📊 Générer la liste"):
+                    if st.button("📊 Générer"):
                         tmp = []
                         curr = d1
                         while curr <= d2:
@@ -121,105 +112,104 @@ elif menu == "🔐 Administration":
                 if st.session_state['at_list']:
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, num_rows="dynamic", column_config=conf, key="ed_gen")
                     
+                    # Correction Capacité Automatique
+                    for i, row in res_gen.iterrows():
+                        if i < len(st.session_state['at_list']):
+                            if row['Lieu'] != st.session_state['at_list'][i]['Lieu']:
+                                res_gen.at[i, 'Capacité'] = map_capa.get(row['Lieu'], 10)
+                                st.session_state['at_list'] = res_gen.to_dict(orient='records')
+                                st.rerun()
+
                     c_save, c_plus = st.columns([1, 4])
-                    if c_save.button("✅ Enregistrer", use_container_width=True):
+                    if c_save.button("✅ Enregistrer"):
                         to_db = [{"date_atelier": parse_date_flexible(r['Date']), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": r['Capacité'], "est_actif": r['Actif']} for _, r in res_gen.iterrows() if r['Titre']]
                         supabase.table("ateliers").insert(to_db).execute()
-                        st.session_state['at_list'] = []; st.success("Enregistré !"); st.rerun()
+                        st.session_state['at_list'] = []; st.rerun()
                     
-                    if c_plus.button("➕ Ajouter une ligne", use_container_width=False):
+                    if c_plus.button("➕ Ajouter une ligne"):
                         st.session_state['at_list'].append({"Date": datetime.now().strftime("%d/%m/%Y"), "Titre": "", "Lieu": l_list[0], "Horaire": h_list[0], "Capacité": map_capa[l_list[0]], "Actif": True, "_raw_date": str(datetime.now().date())})
                         st.rerun()
 
             else:
-                st.subheader("📚 Répertoire")
-                f_r = st.radio("Filtre :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
+                # RÉPERTOIRE AVEC SUPPRESSION MULTIPLE ET DATES FR
                 db_d = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").order("date_atelier", desc=True).execute().data
                 if db_d:
-                    df_r = pd.DataFrame([{"ID": a['id'], "Date": format_date_fr(a['date_atelier']), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Capacité": a['capacite_max'], "Actif": a['est_actif']} for a in db_d])
+                    # Ici les dates sont déjà passées par format_date_fr()
+                    df_r = pd.DataFrame([{"Select": False, "ID": a['id'], "Date": format_date_fr(a['date_atelier']), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Capacité": a['capacite_max'], "Actif": a['est_actif']} for a in db_d])
+                    
                     res_r = st.data_editor(df_r, hide_index=True, disabled=["Date"], column_config=conf, key="ed_rep")
                     
-                    if st.button("💾 Sauvegarder les modifications"):
+                    c1, c2 = st.columns([1, 4])
+                    if c1.button("💾 Sauvegarder"):
                         for _, row in res_r.iterrows():
                             supabase.table("ateliers").update({"titre": row['Titre'], "lieu_id": map_l_id[row['Lieu']], "horaire_id": map_h_id[row['Horaire']], "capacite_max": row['Capacité'], "est_actif": row['Actif']}).eq("id", row['ID']).execute()
-                        st.success("Mis à jour !"); st.rerun()
+                        st.rerun()
                     
-                    st.divider()
-                    st.subheader("🗑️ Zone de suppression")
-                    at_to_del = st.selectbox("Choisir un atelier à supprimer", [f"{a['date_atelier']} - {a['titre']} (ID:{a['id']})" for a in db_d])
-                    if st.button("❌ Supprimer l'atelier sélectionné"):
-                        target_id = int(at_to_del.split("ID:")[1].replace(")", ""))
-                        nb_inscr = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", target_id).execute().count
-                        
-                        @st.dialog("Confirmation de suppression")
-                        def confirm_del(aid, count):
-                            if count > 0:
-                                st.warning(f"⚠️ Attention : Cet atelier possède {count} inscription(s).")
-                                code_auth = st.text_input("Entrez le CODE ADMINISTRATEUR pour forcer la suppression", type="password")
-                                if st.button("Forcer la suppression"):
-                                    if code_auth == current_code:
-                                        supabase.table("inscriptions").delete().eq("atelier_id", aid).execute()
-                                        supabase.table("ateliers").delete().eq("id", aid).execute()
-                                        st.success("Atelier et inscriptions supprimés."); st.rerun()
-                                    else: st.error("Code incorrect.")
-                            else:
-                                st.write("Voulez-vous vraiment supprimer cet atelier vide ?")
-                                if st.button("Confirmer la suppression"):
-                                    supabase.table("ateliers").delete().eq("id", aid).execute()
-                                    st.success("Supprimé."); st.rerun()
-                        confirm_del(target_id, nb_inscr)
+                    selected_rows = res_r[res_r['Select'] == True]
+                    if not selected_rows.empty:
+                        selected_ids = selected_rows['ID'].tolist()
+                        if c2.button(f"🗑️ Supprimer la sélection ({len(selected_ids)})", type="primary"):
+                            @st.dialog("Confirmation de suppression groupée")
+                            def multi_del(rows):
+                                ids = rows['ID'].tolist()
+                                total_inscr = 0
+                                for i in ids:
+                                    total_inscr += supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", i).execute().count
+                                
+                                if total_inscr > 0:
+                                    st.warning(f"⚠️ {total_inscr} inscription(s) détectée(s) dans la sélection.")
+                                    code = st.text_input("Code Administrateur requis pour forcer la suppression", type="password")
+                                    if st.button("Confirmer la suppression forcée"):
+                                        if code == current_code:
+                                            supabase.table("inscriptions").delete().in_("atelier_id", ids).execute()
+                                            supabase.table("ateliers").delete().in_("id", ids).execute()
+                                            st.rerun()
+                                        else: st.error("Code invalide.")
+                                else:
+                                    st.write(f"Voulez-vous supprimer ces {len(ids)} ateliers (dates au format FR) ?")
+                                    for d in rows['Date'].tolist():
+                                        st.text(f"- {d}")
+                                    if st.button("Confirmer la suppression"):
+                                        supabase.table("ateliers").delete().in_("id", ids).execute()
+                                        st.rerun()
+                            multi_del(selected_rows)
 
-        # --- ONGLETS ADHÉRENTS / LIEUX / SÉCURITÉ (INCHANGÉS) ---
+        # --- ONGLETS ADHÉRENTS / LIEUX / SÉCURITÉ (CONSERVÉS) ---
         with t2:
-            st.subheader("👥 Adhérents")
             with st.form("f_adh"):
                 n, p = st.text_input("Nom"), st.text_input("Prénom")
                 if st.form_submit_button("Ajouter"):
-                    supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute()
-                    st.rerun()
+                    supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute(); st.rerun()
             for u in supabase.table("adherents").select("*").eq("est_actif", True).order("nom").execute().data:
-                c1, c2 = st.columns([5, 1])
-                c1.write(f"**{u['nom']}** {u['prenom']}")
+                c1, c2 = st.columns([5, 1]); c1.write(f"**{u['nom']}** {u['prenom']}")
                 if c2.button("🗑️", key=f"u_{u['id']}"):
-                    supabase.table("adherents").update({"est_actif": False}).eq("id", u['id']).execute()
-                    st.rerun()
+                    supabase.table("adherents").update({"est_actif": False}).eq("id", u['id']).execute(); st.rerun()
 
         with t3:
             col_l, col_h = st.columns(2)
             with col_l:
-                st.subheader("📍 Lieux")
                 with st.form("f_l"):
                     nl, cl = st.text_input("Nom"), st.number_input("Capacité", min_value=1)
-                    if st.form_submit_button("Ajouter"):
-                        supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cl, "est_actif": True}).execute()
-                        st.rerun()
+                    if st.form_submit_button("OK"):
+                        supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cl, "est_actif": True}).execute(); st.rerun()
                 for l in l_raw:
-                    c1, c2 = st.columns([3, 1])
-                    c1.write(f"{l['nom']} ({l['capacite_accueil']} pl.)")
+                    c1, c2 = st.columns([3, 1]); c1.write(f"{l['nom']} ({l['capacite_accueil']} pl.)")
                     if c2.button("🗑️", key=f"l_{l['id']}"):
-                        supabase.table("lieux").update({"est_actif": False}).eq("id", l['id']).execute()
-                        st.rerun()
+                        supabase.table("lieux").update({"est_actif": False}).eq("id", l['id']).execute(); st.rerun()
             with col_h:
-                st.subheader("⏰ Horaires")
                 with st.form("f_h"):
                     nh = st.text_input("Libellé")
-                    if st.form_submit_button("Ajouter"):
-                        supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute()
-                        st.rerun()
+                    if st.form_submit_button("OK"):
+                        supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); st.rerun()
                 for h in h_raw:
-                    c1, c2 = st.columns([3, 1])
-                    c1.write(h['libelle'])
+                    c1, c2 = st.columns([3, 1]); c1.write(h['libelle'])
                     if c2.button("🗑️", key=f"h_{h['id']}"):
-                        supabase.table("horaires").update({"est_actif": False}).eq("id", h['id']).execute()
-                        st.rerun()
+                        supabase.table("horaires").update({"est_actif": False}).eq("id", h['id']).execute(); st.rerun()
 
         with t4:
-            st.subheader("⚙️ Sécurité")
             with st.form("f_sec"):
-                o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
+                o, n = st.text_input("Ancien", type="password"), st.text_input("Nouveau", type="password")
                 if st.form_submit_button("Changer"):
                     if o == current_code:
-                        supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
-                        st.success("Code mis à jour !"); st.rerun()
-    else:
-        st.info("Saisissez le code secret pour accéder à l'administration.")
+                        supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute(); st.rerun()
+    else: st.info("Saisissez le code secret.")
