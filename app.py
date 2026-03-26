@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd
+import pd as pd
 from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import re
@@ -56,7 +56,6 @@ menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "🔐 Administration
 if menu == "📝 Inscriptions":
     st.header("📍 Inscription aux Ateliers")
     
-    # Chargement des adhérents actifs
     res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").execute()
     dict_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
     liste_noms = ["Choisir..."] + list(dict_adh.keys())
@@ -65,18 +64,17 @@ if menu == "📝 Inscriptions":
     
     if user_principal != "Choisir...":
         today_str = str(date.today())
-        # Ateliers futurs avec détails
         res_at = supabase.table("ateliers").select("*, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
         
         if not res_at.data:
             st.info("Aucun atelier prévu prochainement.")
         else:
             for at in res_at.data:
-                # 1. Récupérer TOUTES les inscriptions pour cet atelier (avec infos adhérents)
+                # Récupération des inscriptions actuelles
                 res_ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", at['id']).execute()
                 inscrits = res_ins.data
                 
-                # 2. Calcul des places (1 adulte + X enfants par ligne)
+                # Calcul de l'occupation actuelle
                 total_occupé = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in inscrits])
                 restantes = at['capacite_max'] - total_occupé
                 
@@ -86,62 +84,58 @@ if menu == "📝 Inscriptions":
                 
                 with st.expander(f"📅 {date_txt} - {at['titre']} | {lieu_h} {statut}"):
                     
-                    # --- AFFICHAGE DE LA LISTE DES PERSONNES INSCRITES ---
                     st.markdown("##### 👥 Liste des inscrits")
                     if not inscrits:
-                        st.write("_Aucun inscrit pour le moment._")
+                        st.write("_Aucun inscrit._")
                     else:
                         for i in inscrits:
                             col_n, col_e, col_act = st.columns([3, 2, 1])
-                            nom_complet = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
-                            col_n.write(f"• **{nom_complet}**")
+                            nom_i = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
+                            col_n.write(f"• **{nom_i}**")
                             col_e.write(f"{i['nb_enfants']} enfant(s)")
-                            # Bouton pour désinscrire (soi-même ou un collègue)
                             if col_act.button("🗑️", key=f"del_{at['id']}_{i['id']}"):
                                 supabase.table("inscriptions").delete().eq("id", i['id']).execute()
                                 st.rerun()
                     
                     st.markdown("---")
+                    st.markdown("##### ➕ Inscrire ou Modifier")
                     
-                    # --- FORMULAIRE D'INSCRIPTION ---
-                    if restantes <= 0:
-                        st.warning("Cet atelier est complet.")
-                    else:
-                        st.markdown("##### ➕ Inscrire quelqu'un")
-                        ci1, ci2, ci3 = st.columns([2, 2, 1])
-                        
-                        with ci1:
-                            # Possibilité d'inscrire un collègue
-                            beneficiaire = st.selectbox("Qui inscrire ?", liste_noms, key=f"ben_{at['id']}")
-                        
-                        with ci2:
-                            mode_e = st.radio("Enfants :", ["1", "2", "3", "4", "Plus..."], horizontal=True, key=f"me_{at['id']}")
-                            if mode_e == "Plus...":
-                                nb_e = st.number_input("Nombre :", 5, 20, 5, key=f"ne_{at['id']}")
+                    ci1, ci2, ci3 = st.columns([2, 2, 1])
+                    with ci1:
+                        beneficiaire = st.selectbox("Qui ?", liste_noms, key=f"ben_{at['id']}")
+                    with ci2:
+                        mode_e = st.radio("Enfants :", ["1", "2", "3", "4", "Plus..."], horizontal=True, key=f"me_{at['id']}")
+                        nb_e = st.number_input("Nombre :", 5, 20, 5, key=f"ne_{at['id']}") if mode_e == "Plus..." else int(mode_e)
+                    
+                    with ci3:
+                        st.write("")
+                        if st.button("Valider", key=f"btn_{at['id']}", type="primary"):
+                            if beneficiaire == "Choisir...":
+                                st.error("Sélectionnez un nom.")
                             else:
-                                nb_e = int(mode_e)
-                        
-                        with ci3:
-                            st.write("") # Espacement
-                            if st.button("Valider", key=f"btn_{at['id']}", type="primary"):
-                                if beneficiaire == "Choisir...":
-                                    st.error("Sélectionnez un nom.")
+                                id_ben = dict_adh[beneficiaire]
+                                # Vérifier si la personne est déjà là
+                                existing = next((ins for ins in inscrits if ins['adherent_id'] == id_ben), None)
+                                
+                                # Calcul du changement de jauge
+                                # Si nouveau : + (1 + nb_e)
+                                # Si modif : + (nb_e_nouveau - nb_e_ancien)
+                                diff = (1 + nb_e) if not existing else (nb_e - existing['nb_enfants'])
+                                
+                                if diff > restantes:
+                                    st.error(f"Places insuffisantes (manque {diff - restantes} places).")
                                 else:
-                                    id_ben = dict_adh[beneficiaire]
-                                    # Vérifier si déjà inscrit
-                                    deja = any(ins['adherent_id'] == id_ben for ins in inscrits)
-                                    if deja:
-                                        st.warning(f"{beneficiaire} est déjà inscrit(e).")
-                                    elif (1 + nb_e) > restantes:
-                                        st.error("Places insuffisantes.")
+                                    if existing:
+                                        # MISE À JOUR (on ne change que le nombre d'enfants)
+                                        supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
+                                        st.toast(f"Mise à jour pour {beneficiaire} effectueé !")
                                     else:
-                                        supabase.table("inscriptions").insert({
-                                            "adherent_id": id_ben, 
-                                            "atelier_id": at['id'], 
-                                            "nb_enfants": nb_e
-                                        }).execute()
-                                        st.success(f"Inscription de {beneficiaire} validée.")
-                                        st.rerun()
+                                        # NOUVELLE INSCRIPTION
+                                        supabase.table("inscriptions").insert({"adherent_id": id_ben, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
+                                        st.toast(f"{beneficiaire} inscrit(e) !")
+                                    
+                                    # Pour rester au même endroit, on utilise rerun pour actualiser la liste et le calcul
+                                    st.rerun()
 
 # ==========================================
 # SECTION 🔐 ADMINISTRATION (Inchangée)
@@ -192,9 +186,9 @@ elif menu == "🔐 Administration":
                         st.session_state['at_list'] = res_gen[res_gen['Select'] == False].to_dict(orient='records'); st.rerun()
             else:
                 # RÉPERTOIRE
-                res_r = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").order("date_atelier").execute().data
-                if res_r:
-                    df_r = pd.DataFrame([{"Select": False, "ID": a['id'], "Date": format_date_fr(a['date_atelier']), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Capacité": a['capacite_max'], "Actif": a['est_actif']} for a in res_r])
+                res_rep = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").order("date_atelier").execute().data
+                if res_rep:
+                    df_r = pd.DataFrame([{"Select": False, "ID": a['id'], "Date": format_date_fr(a['date_atelier']), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Capacité": a['capacite_max'], "Actif": a['est_actif']} for a in res_rep])
                     ed_r = st.data_editor(df_r, hide_index=True, column_config=conf, key="ed_rep")
                     if st.button("💾 Sauvegarder"):
                         for _, row in ed_r.iterrows():
@@ -228,4 +222,3 @@ elif menu == "🔐 Administration":
                 if st.form_submit_button("Changer"):
                     if o == current_code: supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute(); st.rerun()
     else: st.info("Saisissez le code secret.")
-    
