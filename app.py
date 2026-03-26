@@ -4,9 +4,10 @@ from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import re
 
-# 1. Configuration
+# 1. Configuration de la page
 st.set_page_config(page_title="RPE Connect - Gestion Master", page_icon="🌿", layout="wide")
 
+# Connexion Supabase
 url = st.secrets["supabase_url"]
 key = st.secrets["supabase_key"]
 supabase: Client = create_client(url, key)
@@ -54,19 +55,60 @@ current_code = get_secret_code()
 st.title("🌿 Système RPE Connect")
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "🔐 Administration"])
 
+# ==========================================
+# SECTION 📝 INSCRIPTIONS (Côté Utilisateur)
+# ==========================================
 if menu == "📝 Inscriptions":
     st.header("📍 Inscription aux Ateliers")
+    
     res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").execute()
     noms_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
-    choix_adh = st.selectbox("Sélectionnez votre nom", ["Choisir..."] + list(noms_adh.keys()))
+    
+    choix_adh = st.selectbox("👤 Sélectionnez votre nom", ["Choisir..."] + list(noms_adh.keys()))
+    
     if choix_adh != "Choisir...":
-        res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).order("date_atelier").execute()
-        for at in res_at.data:
-            with st.expander(f"📅 {format_date_fr(at['date_atelier'])} - {at['titre']}"):
-                if st.button("Confirmer l'inscription", key=f"reg_{at['id']}"):
-                    supabase.table("inscriptions").insert({"adherent_id": noms_adh[choix_adh], "atelier_id": at['id']}).execute()
-                    st.success("✅ Inscription validée !")
+        id_adh = noms_adh[choix_adh]
+        today_str = str(date.today())
+        
+        # Récupération des ateliers futurs
+        res_at = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
+        
+        # Récupération des inscriptions de l'utilisateur
+        mes_inscriptions = supabase.table("inscriptions").select("atelier_id").eq("adherent_id", id_adh).execute()
+        deja_inscrit_ids = [i['atelier_id'] for i in mes_inscriptions.data]
 
+        if not res_at.data:
+            st.info("Aucun atelier n'est programmé pour le moment.")
+        else:
+            st.subheader("📅 Ateliers disponibles")
+            for at in res_at.data:
+                # Calcul des places
+                res_count = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", at['id']).execute()
+                occupées = res_count.count if res_count.count else 0
+                restantes = at['capacite_max'] - occupées
+                
+                date_txt = format_date_fr(at['date_atelier'])
+                statut = f"({restantes} places restantes)" if restantes > 0 else "(COMPLET)"
+                
+                with st.expander(f"📅 {date_txt} - {at['titre']} {statut}"):
+                    st.write(f"📍 **Lieu :** {at['lieux']['nom']} | ⏰ **Horaire :** {at['horaires']['libelle']}")
+                    
+                    if at['id'] in deja_inscrit_ids:
+                        st.success("✅ Vous êtes déjà inscrit.")
+                        if st.button("Se désister", key=f"unreg_{at['id']}"):
+                            supabase.table("inscriptions").delete().eq("adherent_id", id_adh).eq("atelier_id", at['id']).execute()
+                            st.rerun()
+                    elif restantes <= 0:
+                        st.error("Atelier complet.")
+                    else:
+                        if st.button("Confirmer l'inscription", key=f"reg_{at['id']}", type="primary"):
+                            supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id']}).execute()
+                            st.balloons()
+                            st.rerun()
+
+# ==========================================
+# SECTION 🔐 ADMINISTRATION
+# ==========================================
 elif menu == "🔐 Administration":
     password_input = st.text_input("Code secret d'accès", type="password")
     
@@ -76,11 +118,9 @@ elif menu == "🔐 Administration":
         with t1:
             l_raw = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
             h_raw = supabase.table("horaires").select("*").eq("est_actif", True).execute().data
-            l_list = [l['nom'] for l in l_raw]
-            h_list = [h['libelle'] for h in h_raw]
+            l_list, h_list = [l['nom'] for l in l_raw], [h['libelle'] for h in h_raw]
             map_capa = {l['nom']: l['capacite_accueil'] for l in l_raw}
-            map_l_id = {l['nom']: l['id'] for l in l_raw}
-            map_h_id = {h['libelle']: h['id'] for h in h_raw}
+            map_l_id, map_h_id = {l['nom']: l['id'] for l in l_raw}, {h['libelle']: h['id'] for h in h_raw}
 
             sub = st.radio("Sous-menu :", ["Générateur", "Répertoire"], horizontal=True)
 
@@ -116,10 +156,9 @@ elif menu == "🔐 Administration":
                     
                     c_up, c_plus, c_save, c_del = st.columns([1.5, 1.5, 1.5, 1.5])
                     
-                    if c_up.button("🔄 Rafraîchir capacités"):
+                    if c_up.button("🔄 Rafraîchir données"):
                         updated = []
                         for _, r in res_gen.iterrows():
-                            # Met à jour la capacité selon le lieu choisi ET formate la date si saisie manuelle
                             r['Capacité'] = map_capa.get(r['Lieu'], 10)
                             r['Date'] = format_date_fr(parse_date_fr_to_iso(r['Date']))
                             updated.append(r.to_dict())
@@ -136,20 +175,15 @@ elif menu == "🔐 Administration":
                         to_db = []
                         for _, r in res_gen.iterrows():
                             if str(r['Titre']).strip() != "" and not r['Select']:
-                                to_db.append({
-                                    "date_atelier": parse_date_fr_to_iso(r['Date']), 
-                                    "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], 
-                                    "horaire_id": map_h_id[r['Horaire']], "capacite_max": int(r['Capacité']), "est_actif": bool(r['Actif'])
-                                })
+                                to_db.append({"date_atelier": parse_date_fr_to_iso(r['Date']), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": int(r['Capacité']), "est_actif": bool(r['Actif'])})
                         if to_db:
                             supabase.table("ateliers").insert(to_db).execute()
                             st.session_state['at_list'] = []
                             st.success("Ateliers créés !"); st.rerun()
 
-                    if not res_gen[res_gen['Select'] == True].empty:
-                        if c_del.button("🗑️ Retirer", type="primary"):
-                            st.session_state['at_list'] = res_gen[res_gen['Select'] == False].to_dict(orient='records')
-                            st.rerun()
+                    if not res_gen[res_gen['Select'] == True].empty and c_del.button("🗑️ Retirer"):
+                        st.session_state['at_list'] = res_gen[res_gen['Select'] == False].to_dict(orient='records')
+                        st.rerun()
 
             else:
                 # RÉPERTOIRE
@@ -178,44 +212,37 @@ elif menu == "🔐 Administration":
                     c1, c2 = st.columns([1, 4])
                     if c1.button("💾 Sauvegarder"):
                         for _, row in res_r[res_r['Select'] == False].iterrows():
-                            supabase.table("ateliers").update({
-                                "titre": str(row['Titre']), "lieu_id": map_l_id[row['Lieu']], 
-                                "horaire_id": map_h_id[row['Horaire']], "capacite_max": int(row['Capacité']), "est_actif": bool(row['Actif'])
-                            }).eq("id", int(row['ID'])).execute()
+                            supabase.table("ateliers").update({"titre": str(row['Titre']), "lieu_id": map_l_id[row['Lieu']], "horaire_id": map_h_id[row['Horaire']], "capacite_max": int(row['Capacité']), "est_actif": bool(row['Actif'])}).eq("id", int(row['ID'])).execute()
                         st.success("Mis à jour !"); st.rerun()
                     
-                    sel_del = res_r[res_r['Select'] == True]
-                    if not sel_del.empty and c2.button("🗑️ Supprimer sélection", type="primary"):
-                        @st.dialog("Confirmation de suppression")
+                    if not res_r[res_r['Select'] == True].empty and c2.button("🗑️ Supprimer sélection"):
+                        @st.dialog("Confirmation")
                         def confirm_del_rep(rows):
                             ids = rows['ID'].tolist()
-                            # Vérification des inscriptions existantes
                             total_inscrit = 0
                             for at_id in ids:
                                 check = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", at_id).execute()
                                 total_inscrit += check.count if check.count else 0
                             
                             if total_inscrit > 0:
-                                st.error(f"⚠️ ATTENTION : {total_inscrit} inscription(s) en cours sur ces ateliers !")
-                                code = st.text_input("Saisir le code secret pour forcer :", type="password")
-                                if st.button("Confirmer Suppression FORCÉE"):
+                                st.error(f"⚠️ {total_inscrit} inscription(s) en cours !")
+                                code = st.text_input("Code secret pour confirmer :", type="password")
+                                if st.button("Supprimer quand même"):
                                     if code == current_code:
                                         supabase.table("inscriptions").delete().in_("atelier_id", ids).execute()
                                         supabase.table("ateliers").delete().in_("id", ids).execute()
                                         st.rerun()
-                                    else: st.error("Code incorrect.")
                             else:
-                                st.warning(f"Confirmez-vous la suppression de {len(ids)} atelier(s) ?")
-                                if st.button("Oui, supprimer"):
+                                if st.button("Confirmer la suppression"):
                                     supabase.table("ateliers").delete().in_("id", ids).execute()
                                     st.rerun()
-                        confirm_del_rep(sel_del)
+                        confirm_del_rep(res_r[res_r['Select'] == True])
 
         # --- ONGLETS ADHÉRENTS / LIEUX / SÉCURITÉ ---
         with t2:
             with st.form("f_adh"):
                 n, p = st.text_input("Nom"), st.text_input("Prénom")
-                if st.form_submit_button("Ajouter Adhérent"):
+                if st.form_submit_button("Ajouter"):
                     supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute(); st.rerun()
             for u in supabase.table("adherents").select("*").eq("est_actif", True).order("nom").execute().data:
                 c1, c2 = st.columns([5, 1]); c1.write(f"**{u['nom']}** {u['prenom']}")
