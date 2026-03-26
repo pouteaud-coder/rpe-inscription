@@ -1,6 +1,5 @@
 streamlit
-supabase
 pandas
-xlsxwriter
+supabase
 xlsxwriter
 fpdf
