@@ -80,6 +80,16 @@ def secure_delete_dialog(table, item_id, label, current_code):
         else: 
             st.error("Code incorrect")
 
+@st.dialog("⚠️ Confirmer la désinscription")
+def confirm_unsubscribe_dialog(ins_id, nom_complet):
+    st.warning(f"Souhaitez-vous vraiment annuler la réservation de **{nom_complet}** ?")
+    c1, c2 = st.columns(2)
+    if c1.button("Oui, désinscrire", type="primary"):
+        supabase.table("inscriptions").delete().eq("id", ins_id).execute()
+        st.rerun()
+    if c2.button("Non, conserver"):
+        st.rerun()
+
 # --- CHARGEMENT DES DONNÉES GLOBALES ---
 if 'at_list' not in st.session_state: 
     st.session_state['at_list'] = []
@@ -114,20 +124,18 @@ if menu == "📝 Inscriptions":
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             date_f = format_date_fr_complete(at['date_atelier'], gras=True)
             
-            # Pas d'émojis ici, juste les infos demandées
             titre_label = f"{date_f} — {at['titre']}\n📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
             
             with st.expander(titre_label):
                 if res_ins.data:
                     for i in res_ins.data:
-                        # RAPPEL : Colonnes asymétriques pour forcer le bouton à rester à droite sur mobile
                         c_nom, c_poub = st.columns([0.88, 0.12])
                         n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
                         c_nom.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
                         
                         if c_poub.button("🗑️", key=f"del_{i['id']}"):
-                            supabase.table("inscriptions").delete().eq("id", i['id']).execute()
-                            st.rerun()
+                            # Appel de notre nouvelle boîte de dialogue sécurisée
+                            confirm_unsubscribe_dialog(i['id'], n_f)
                 
                 st.markdown("---")
                 try: 
@@ -143,11 +151,22 @@ if menu == "📝 Inscriptions":
                     if qui != "Choisir...":
                         id_adh = dict_adh[qui]
                         existing = next((ins for ins in res_ins.data if ins['adherent_id'] == id_adh), None)
-                        if existing: 
-                            supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
-                        else: 
-                            supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
-                        st.rerun()
+                        
+                        # LOGIQUE RIGOUREUSE DE CONTRÔLE DE CAPACITÉ
+                        if existing:
+                            places_supplementaires = nb_e - existing['nb_enfants']
+                            if restantes - places_supplementaires < 0:
+                                st.error(f"Modification impossible : il ne reste que {restantes} place(s).")
+                            else:
+                                supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
+                                st.rerun()
+                        else:
+                            places_demandees = 1 + nb_e
+                            if restantes - places_demandees < 0:
+                                st.error(f"Inscription impossible : l'atelier n'a pas assez de places (Reste : {restantes}).")
+                            else:
+                                supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
+                                st.rerun()
 
 # ==========================================
 # SECTION 📊 SUIVI & RÉCAP
@@ -211,7 +230,6 @@ elif menu == "📊 Suivi & Récap":
             if index < len(ats_raw.data) - 1:
                 st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
-
 # ==========================================
 # SECTION 🔐 ADMINISTRATION
 # ==========================================
@@ -236,7 +254,7 @@ elif menu == "🔐 Administration":
                 d2 = c_g2.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
                 js_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
                 
-                c_btn_gen = st.columns([0.3, 0.7])[1] # Utilisation de colonnes pour décaler à droite
+                c_btn_gen = st.columns([0.3, 0.7])[1]
                 if c_btn_gen.button("📊 Générer la liste des ateliers", use_container_width=True):
                     tmp = []
                     curr = d1
@@ -252,8 +270,7 @@ elif menu == "🔐 Administration":
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, use_container_width=True)
                     if st.button("✅ Enregistrer définitivement"):
                         to_db = [{"date_atelier": parse_date_fr_to_iso(r['Date']), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": int(r['Capacité']), "est_actif": True} for _, r in res_gen.iterrows() if r['Titre'] != ""]
-                        if to_db: 
-                            supabase.table("ateliers").insert(to_db).execute()
+                        if to_db: supabase.table("ateliers").insert(to_db).execute()
                         st.session_state['at_list'] = []
                         st.rerun()
             else: 
@@ -262,7 +279,7 @@ elif menu == "🔐 Administration":
                     df_rep = pd.DataFrame([{"Date": format_date_fr_complete(a['date_atelier'], gras=True), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Actif": a['est_actif']} for a in at_rep])
                     edited_df = st.data_editor(df_rep, hide_index=True, use_container_width=True)
                     
-                    c_btn_save = st.columns([0.3, 0.7])[1] # Décalage à droite via colonnes
+                    c_btn_save = st.columns([0.3, 0.7])[1]
                     if c_btn_save.button("💾 Sauvegarder les modifications du répertoire", use_container_width=True, type="primary"):
                         for idx, row in edited_df.iterrows():
                             at_id = at_rep[idx]['id']
