@@ -54,8 +54,31 @@ if menu == "📝 Inscriptions":
 # --- SECTION 2 : ADMINISTRATION ---
 elif menu == "🔐 Administration":
     st.header("🔐 Espace de Gestion")
-    password_input = st.text_input("Code secret d'accès", type="password")
+    
+    # --- BLOC DE RÉCUPÉRATION (VISIBLE MÊME SI NON CONNECTÉ) ---
+    col_input, col_oubli = st.columns([3, 1])
+    
+    with col_input:
+        password_input = st.text_input("Code secret d'accès", type="password", key="main_admin_pass")
 
+    with col_oubli:
+        st.write(" ") # Alignement
+        if st.button("Code oublié ?", key="btn_recup_code"):
+            @st.dialog("Récupération du code")
+            def recover_dialog():
+                st.write("Entrez le code de secours pour définir un nouveau code.")
+                rescue = st.text_input("Code de secours (0000)", type="password")
+                new_c = st.text_input("Nouveau code souhaité", type="password")
+                if st.button("Valider le changement"):
+                    if rescue == "0000" and new_c:
+                        supabase.table("configuration").update({"secret_code": new_c}).eq("id", "main_config").execute()
+                        st.success("Code mis à jour ! Rechargez la page.")
+                        st.rerun()
+                    else:
+                        st.error("Code de secours incorrect.")
+            recover_dialog()
+
+    # --- VÉRIFICATION DU CODE ---
     if password_input == current_code:
         t1, t2, t3, t4 = st.tabs(["🏗️ Ateliers", "👥 Adhérents", "📍 Lieux/Horaires", "⚙️ Sécurité"])
         
@@ -67,9 +90,9 @@ elif menu == "🔐 Administration":
             map_capa = {l['nom']: l['capacite_accueil'] for l in l_raw}
             map_l_id = {l['nom']: l['id'] for l in l_raw}; map_h_id = {h['libelle']: h['id'] for h in h_raw}
 
-            sub_m = st.radio("Sous-menu :", ["Générateur d'ateliers", "Répertoire"], horizontal=True)
+            sub_m = st.radio("Sous-menu :", ["Générateur", "Répertoire"], horizontal=True)
 
-            # Dimensions demandées (px)
+            # Dimensions strictes demandées
             conf = {
                 "Date": st.column_config.TextColumn("Date", width=220),
                 "Titre": st.column_config.TextColumn("Titre", width=320),
@@ -80,19 +103,19 @@ elif menu == "🔐 Administration":
                 "_raw_date": None, "ID": None
             }
 
-            if sub_m == "Générateur d'ateliers":
+            if sub_m == "Générateur":
                 st.subheader("🚀 Création de sessions")
                 c_gen, c_add = st.columns([2, 1])
                 with c_gen.expander("🛠️ Générer une série"):
-                    d_deb = st.date_input("Début", datetime.now(), format="DD/MM/YYYY")
-                    d_fin = st.date_input("Fin", d_deb + timedelta(days=7), format="DD/MM/YYYY")
+                    d_deb = st.date_input("Début", datetime.now())
+                    d_fin = st.date_input("Fin", d_deb + timedelta(days=7))
                     jours = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
-                    if st.button("📊 Lancer la génération"):
+                    if st.button("📊 Lancer"):
                         temp = []
                         curr = d_deb
-                        js_f = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                         while curr <= d_fin:
-                            if js_f[curr.weekday()] in jours:
+                            js = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+                            if js[curr.weekday()] in jours:
                                 temp.append({"Date": format_date_fr(curr), "Titre": "Atelier Éveil", "Lieu": liste_l[0], "Horaire": liste_h[0], "Capacité": map_capa[liste_l[0]], "Actif": True, "_raw_date": str(curr)})
                             curr += timedelta(days=1)
                         st.session_state['at_list'] = temp
@@ -115,7 +138,7 @@ elif menu == "🔐 Administration":
                     if st.button("✅ Enregistrer les nouveaux ateliers"):
                         to_db = [{"date_atelier": r.get('_raw_date', str(datetime.now().date())), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": r['Capacité'], "est_actif": r['Actif']} for _, r in res_gen.iterrows() if r['Titre']]
                         supabase.table("ateliers").insert(to_db).execute()
-                        st.session_state['at_list'] = []; st.success("Enregistré !"); st.rerun()
+                        st.session_state['at_list'] = []; st.rerun()
 
             else:
                 st.subheader("📚 Répertoire")
@@ -130,13 +153,13 @@ elif menu == "🔐 Administration":
                     if st.button("💾 Sauvegarder les modifications"):
                         for _, row in res_r.iterrows():
                             supabase.table("ateliers").update({"titre": row['Titre'], "lieu_id": map_l_id[row['Lieu']], "horaire_id": map_h_id[row['Horaire']], "capacite_max": row['Capacité'], "est_actif": row['Actif']}).eq("id", row['ID']).execute()
-                        st.success("Répertoire mis à jour !"); st.rerun()
+                        st.rerun()
 
-        # --- ONGLET 2 : ADHÉRENTS (RESTAURÉ) ---
+        # --- ONGLET 2 : ADHÉRENTS ---
         with t2:
-            st.subheader("👥 Gestion des Adhérents")
-            with st.expander("➕ Ajouter un adhérent"):
-                with st.form("f_new_adh"):
+            st.subheader("👥 Adhérents")
+            with st.expander("➕ Ajouter"):
+                with st.form("f_adh"):
                     n, p = st.text_input("Nom"), st.text_input("Prénom")
                     if st.form_submit_button("Créer"):
                         supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute()
@@ -149,13 +172,13 @@ elif menu == "🔐 Administration":
                         supabase.table("adherents").update({"est_actif": False}).eq("id", u['id']).execute()
                         st.rerun()
 
-        # --- ONGLET 3 : LIEUX / HORAIRES (RESTAURÉ) ---
+        # --- ONGLET 3 : PARAMÈTRES (LIEUX/HORAIRES) ---
         with t3:
             col_l, col_h = st.columns(2)
             with col_l:
                 st.subheader("📍 Lieux")
                 with st.expander("➕ Nouveau"):
-                    with st.form("f_new_l"):
+                    with st.form("f_l"):
                         nl, cl = st.text_input("Nom"), st.number_input("Capacité", min_value=1, value=10)
                         if st.form_submit_button("Ajouter"):
                             supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cl, "est_actif": True}).execute()
@@ -170,8 +193,8 @@ elif menu == "🔐 Administration":
             with col_h:
                 st.subheader("⏰ Horaires")
                 with st.expander("➕ Nouveau"):
-                    with st.form("f_new_h"):
-                        nh = st.text_input("Libellé (ex: 10h-12h)")
+                    with st.form("f_h"):
+                        nh = st.text_input("Libellé")
                         if st.form_submit_button("Ajouter"):
                             supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute()
                             st.rerun()
@@ -185,12 +208,12 @@ elif menu == "🔐 Administration":
 
         # --- ONGLET 4 : SÉCURITÉ ---
         with t4:
-            st.subheader("⚙️ Paramètres de sécurité")
-            with st.form("f_sec_upd"):
-                o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
-                if st.form_submit_button("Mettre à jour"):
+            st.subheader("⚙️ Code Secret")
+            with st.form("f_sec"):
+                o, n = st.text_input("Ancien", type="password"), st.text_input("Nouveau", type="password")
+                if st.form_submit_button("Changer"):
                     if o == current_code:
                         supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
-                        st.success("Code modifié !"); st.rerun()
-                    else: st.error("L'ancien code est faux.")
-    else: st.info("Saisissez le code secret pour accéder à l'administration.")
+                        st.rerun()
+    else:
+        st.info("Saisissez le code secret pour accéder à l'administration.")
