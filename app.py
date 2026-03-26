@@ -27,7 +27,6 @@ def format_date_fr(date_obj):
     return f"{jours[date_obj.weekday()]} {date_obj.day} {mois[date_obj.month-1]} {date_obj.year}"
 
 def parse_date_flexible(date_str):
-    """Convertit JJ/MM/AAAA ou format long vers YYYY-MM-DD pour la base de données"""
     date_str = str(date_str).strip()
     match = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", date_str)
     if match:
@@ -106,7 +105,10 @@ elif menu == "🔐 Administration":
             if sub == "Générateur":
                 c_gen, c_add = st.columns([2, 1])
                 with c_gen.expander("🛠️ Générer série"):
-                    d1 = st.date_input("Début", datetime.now()); d2 = st.date_input("Fin", d1 + timedelta(days=7))
+                    # MODIFICATION : Format Français pour date_input
+                    d1 = st.date_input("Début", datetime.now(), format="DD/MM/YYYY")
+                    d2 = st.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
+                    
                     jours_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
                     if st.button("📊 Lancer la génération"):
                         tmp = []
