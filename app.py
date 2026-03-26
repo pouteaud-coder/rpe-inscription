@@ -1,5 +1,5 @@
 import streamlit as st
-import pd as pd
+import pandas as pd
 from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import re
@@ -74,7 +74,7 @@ if menu == "📝 Inscriptions":
                 res_ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", at['id']).execute()
                 inscrits = res_ins.data
                 
-                # Calcul de l'occupation actuelle
+                # Calcul de l'occupation (1 adulte + nb_enfants)
                 total_occupé = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in inscrits])
                 restantes = at['capacite_max'] - total_occupé
                 
@@ -105,7 +105,10 @@ if menu == "📝 Inscriptions":
                         beneficiaire = st.selectbox("Qui ?", liste_noms, key=f"ben_{at['id']}")
                     with ci2:
                         mode_e = st.radio("Enfants :", ["1", "2", "3", "4", "Plus..."], horizontal=True, key=f"me_{at['id']}")
-                        nb_e = st.number_input("Nombre :", 5, 20, 5, key=f"ne_{at['id']}") if mode_e == "Plus..." else int(mode_e)
+                        if mode_e == "Plus...":
+                            nb_e = st.number_input("Nombre :", 5, 20, 5, key=f"ne_{at['id']}")
+                        else:
+                            nb_e = int(mode_e)
                     
                     with ci3:
                         st.write("")
@@ -114,31 +117,24 @@ if menu == "📝 Inscriptions":
                                 st.error("Sélectionnez un nom.")
                             else:
                                 id_ben = dict_adh[beneficiaire]
-                                # Vérifier si la personne est déjà là
                                 existing = next((ins for ins in inscrits if ins['adherent_id'] == id_ben), None)
                                 
-                                # Calcul du changement de jauge
-                                # Si nouveau : + (1 + nb_e)
-                                # Si modif : + (nb_e_nouveau - nb_e_ancien)
+                                # Calcul de la différence de jauge
                                 diff = (1 + nb_e) if not existing else (nb_e - existing['nb_enfants'])
                                 
                                 if diff > restantes:
                                     st.error(f"Places insuffisantes (manque {diff - restantes} places).")
                                 else:
                                     if existing:
-                                        # MISE À JOUR (on ne change que le nombre d'enfants)
                                         supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
-                                        st.toast(f"Mise à jour pour {beneficiaire} effectueé !")
+                                        st.toast(f"Mise à jour pour {beneficiaire} !")
                                     else:
-                                        # NOUVELLE INSCRIPTION
                                         supabase.table("inscriptions").insert({"adherent_id": id_ben, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
                                         st.toast(f"{beneficiaire} inscrit(e) !")
-                                    
-                                    # Pour rester au même endroit, on utilise rerun pour actualiser la liste et le calcul
                                     st.rerun()
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION (Inchangée)
+# SECTION 🔐 ADMINISTRATION
 # ==========================================
 elif menu == "🔐 Administration":
     password_input = st.text_input("Code secret d'accès", type="password")
