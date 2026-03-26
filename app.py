@@ -122,4 +122,75 @@ elif menu == "🔐 Administration":
                 f_r = st.radio("Filtre :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
                 query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)")
                 if f_r == "Actifs": query = query.eq("est_actif", True)
-                elif f_r == "Inactifs": query = query.eq("est_
+                elif f_r == "Inactifs": query = query.eq("est_actif", False)
+                db_d = query.order("date_atelier", desc=True).execute().data
+                if db_d:
+                    df_r = pd.DataFrame([{"ID": a['id'], "Date": format_date_fr(a['date_atelier']), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Capacité": a['capacite_max'], "Actif": a['est_actif']} for a in db_d])
+                    res_r = st.data_editor(df_r, hide_index=True, use_container_width=False, disabled=["Date"], column_config=conf, key="ed_rep")
+                    if st.button("💾 Sauvegarder les modifications"):
+                        for _, row in res_r.iterrows():
+                            supabase.table("ateliers").update({"titre": row['Titre'], "lieu_id": map_l_id[row['Lieu']], "horaire_id": map_h_id[row['Horaire']], "capacite_max": row['Capacité'], "est_actif": row['Actif']}).eq("id", row['ID']).execute()
+                        st.success("Répertoire mis à jour !"); st.rerun()
+
+        # --- ONGLET 2 : ADHÉRENTS (RESTAURÉ) ---
+        with t2:
+            st.subheader("👥 Gestion des Adhérents")
+            with st.expander("➕ Ajouter un adhérent"):
+                with st.form("f_new_adh"):
+                    n, p = st.text_input("Nom"), st.text_input("Prénom")
+                    if st.form_submit_button("Créer"):
+                        supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute()
+                        st.rerun()
+            for u in supabase.table("adherents").select("*").eq("est_actif", True).order("nom").execute().data:
+                with st.container(border=True):
+                    c1, c2 = st.columns([5, 1])
+                    c1.write(f"**{u['nom']}** {u['prenom']}")
+                    if c2.button("🗑️", key=f"del_u_{u['id']}"):
+                        supabase.table("adherents").update({"est_actif": False}).eq("id", u['id']).execute()
+                        st.rerun()
+
+        # --- ONGLET 3 : LIEUX / HORAIRES (RESTAURÉ) ---
+        with t3:
+            col_l, col_h = st.columns(2)
+            with col_l:
+                st.subheader("📍 Lieux")
+                with st.expander("➕ Nouveau"):
+                    with st.form("f_new_l"):
+                        nl, cl = st.text_input("Nom"), st.number_input("Capacité", min_value=1, value=10)
+                        if st.form_submit_button("Ajouter"):
+                            supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cl, "est_actif": True}).execute()
+                            st.rerun()
+                for l in l_raw:
+                    with st.container(border=True):
+                        c1, c2 = st.columns([3, 1])
+                        c1.write(f"**{l['nom']}** ({l['capacite_accueil']} pl.)")
+                        if c2.button("🗑️", key=f"del_l_{l['id']}"):
+                            supabase.table("lieux").update({"est_actif": False}).eq("id", l['id']).execute()
+                            st.rerun()
+            with col_h:
+                st.subheader("⏰ Horaires")
+                with st.expander("➕ Nouveau"):
+                    with st.form("f_new_h"):
+                        nh = st.text_input("Libellé (ex: 10h-12h)")
+                        if st.form_submit_button("Ajouter"):
+                            supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute()
+                            st.rerun()
+                for h in h_raw:
+                    with st.container(border=True):
+                        c1, c2 = st.columns([3, 1])
+                        c1.write(h['libelle'])
+                        if c2.button("🗑️", key=f"del_h_{h['id']}"):
+                            supabase.table("horaires").update({"est_actif": False}).eq("id", h['id']).execute()
+                            st.rerun()
+
+        # --- ONGLET 4 : SÉCURITÉ ---
+        with t4:
+            st.subheader("⚙️ Paramètres de sécurité")
+            with st.form("f_sec_upd"):
+                o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
+                if st.form_submit_button("Mettre à jour"):
+                    if o == current_code:
+                        supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
+                        st.success("Code modifié !"); st.rerun()
+                    else: st.error("L'ancien code est faux.")
+    else: st.info("Saisissez le code secret pour accéder à l'administration.")
