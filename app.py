@@ -3,41 +3,38 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import re
+import hashlib
 
 # 1. Configuration de la page
 st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
 
-# --- SYSTÈME DE COULEURS PAR LIEU (Table 'lieux') ---
-# Modifie les clés ci-dessous pour qu'elles correspondent EXACTEMENT aux noms dans ta table
-MAP_COULEURS = {
-    "SALLE DES FÊTES": "#d32f2f",
-    "MAISON DE L'ENFANCE": "#1976d2",
-    "RELAIS PETITE ENFANCE": "#388e3c",
-    "GYMNASE": "#f57c00",
-    "BIBLIOTHÈQUE": "#7b1fa2",
-    "DEFAULT": "#6c757d"
-}
-
+# --- SYSTÈME DE COULEURS DYNAMIQUES PAR LIEU ---
 def get_color(nom_lieu):
-    nom_upper = str(nom_lieu).upper().strip()
-    # On cherche si le nom du lieu contient une des clés configurées
-    for clé, couleur in MAP_COULEURS.items():
-        if clé in nom_upper: return couleur
-    return MAP_COULEURS["DEFAULT"]
+    """Génère une couleur unique et stable pour chaque nom de lieu"""
+    hash_object = hashlib.md5(str(nom_lieu).upper().strip().encode())
+    hex_hash = hash_object.hexdigest()
+    # On génère une couleur typée "Pastel/Sombre" pour que le texte blanc reste lisible
+    return f"#{hex_hash[:6]}"
 
-# --- STYLE CSS (Police augmentée & Optimisation Mobile) ---
+# --- STYLE CSS (Police + Mobile + Tableaux) ---
 st.markdown("""
     <style>
     html, body, [class*="st-"] { font-size: 1.05rem !important; }
     [data-testid="stSidebarNav"] span { font-size: 1.1rem !important; font-weight: 500; }
     .stRadio div[role="radiogroup"] label { font-size: 1.2rem !important; padding-bottom: 10px; }
     .st-emotion-cache-p5m613 p { white-space: normal !important; line-height: 1.5 !important; font-size: 1.05rem !important; }
-    .lieu-badge { padding: 3px 10px; border-radius: 4px; color: white; font-weight: bold; font-size: 0.9rem; display: inline-block; }
+    .lieu-badge { padding: 4px 12px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.9rem; display: inline-block; margin: 2px 0; }
     .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
     
-    /* Maintien Nom + Poubelle sur une ligne mobile */
+    /* Correction pour les colonnes sur Mobile */
     [data-testid="column"] { min-width: 0px !important; flex-basis: auto !important; }
-    .stButton button { padding: 0px 5px !important; height: 30px !important; min-height: 30px !important; width: 38px !important; border: none !important; background-color: transparent !important; font-size: 1.2rem !important; }
+    
+    /* Bouton poubelle (Inscriptions) */
+    .stButton button { padding: 0px 5px !important; height: 32px !important; width: 40px !important; border: none !important; background-color: transparent !important; font-size: 1.2rem !important; }
+    
+    /* Bouton Sauvegarde Admin (plus large) */
+    .save-btn button { width: 100% !important; background-color: #2e7d32 !important; color: white !important; height: 45px !important; font-weight: bold !important; margin-top: 15px !important; }
+    
     button[data-baseweb="tab"] div { font-size: 1.1rem !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -160,8 +157,9 @@ elif menu == "📊 Suivi & Récap":
 
     with t2:
         c_d1, c_d2 = st.columns(2)
-        d_start = c_d1.date_input("Du", date.today())
-        d_end = c_d2.date_input("Au", d_start + timedelta(days=30))
+        # Format FR forcé dans le widget
+        d_start = c_d1.date_input("Du", date.today(), format="DD/MM/YYYY")
+        d_end = c_d2.date_input("Au", d_start + timedelta(days=30), format="DD/MM/YYYY")
         
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_start)).lte("date_atelier", str(d_end)).order("date_atelier").execute()
             
@@ -190,7 +188,8 @@ elif menu == "🔐 Administration":
             sub = st.radio("Mode", ["Générateur", "Répertoire"], horizontal=True)
             if sub == "Générateur":
                 c_g1, c_g2 = st.columns(2)
-                d1 = c_g1.date_input("Début", date.today()); d2 = c_g2.date_input("Fin", d1 + timedelta(days=7))
+                d1 = c_g1.date_input("Début", date.today(), format="DD/MM/YYYY")
+                d2 = c_g2.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
                 js_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
                 if st.button("📊 Générer la liste"):
                     tmp = []; curr = d1; js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
@@ -200,25 +199,29 @@ elif menu == "🔐 Administration":
                         curr += timedelta(days=1)
                     st.session_state['at_list'] = tmp; st.rerun()
                 if st.session_state['at_list']:
-                    res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, num_rows="dynamic")
-                    if st.button("✅ Enregistrer les Ateliers"):
+                    res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, use_container_width=True)
+                    if st.button("✅ Enregistrer les nouveaux ateliers"):
                         to_db = [{"date_atelier": parse_date_fr_to_iso(r['Date']), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": int(r['Capacité']), "est_actif": True} for _, r in res_gen.iterrows() if r['Titre'] != ""]
                         if to_db: supabase.table("ateliers").insert(to_db).execute(); st.session_state['at_list'] = []; st.rerun()
-            else: # RÉPERTOIRE SANS ID
+            else: 
                 at_rep = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").order("date_atelier", desc=True).limit(60).execute().data
                 if at_rep:
                     df_rep = pd.DataFrame([{"Date": format_date_fr_complete(a['date_atelier'], gras=True), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Actif": a['est_actif']} for a in at_rep])
                     edited_df = st.data_editor(df_rep, hide_index=True, use_container_width=True)
-                    if st.button("💾 Sauvegarder les modifications"):
+                    
+                    # Bouton stylisé et déplacé pour être accessible
+                    st.markdown('<div class="save-btn">', unsafe_allow_html=True)
+                    if st.button("💾 Sauvegarder les modifications du répertoire"):
                         for idx, row in edited_df.iterrows():
                             at_id = at_rep[idx]['id']
                             supabase.table("ateliers").update({"titre": row['Titre'], "est_actif": bool(row['Actif'])}).eq("id", at_id).execute()
-                        st.success("Modifications enregistrées !"); st.rerun()
+                        st.success("Répertoire mis à jour !"); st.rerun()
+                    st.markdown('</div>', unsafe_allow_html=True)
 
         with t_ad2: # ADHÉRENTS
             with st.form("add_adh"):
                 col_n, col_p = st.columns(2); n = col_n.text_input("Nom"); p = col_p.text_input("Prénom")
-                if st.form_submit_button("➕ Ajouter l'adhérent"):
+                if st.form_submit_button("➕ Ajouter"):
                     supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute(); st.rerun()
             for u in res_adh.data:
                 c1, c2 = st.columns([0.85, 0.15])
@@ -234,7 +237,7 @@ elif menu == "🔐 Administration":
                     c_a.markdown(f"<span class='lieu-badge' style='background-color:{get_color(l['nom'])}'>{l['nom']}</span>", unsafe_allow_html=True)
                     if c_b.button("🗑️", key=f"l_{l['id']}"): secure_delete_dialog("lieux", l['id'], l['nom'], current_code)
                 with st.form("new_l"):
-                    nl = st.text_input("Nom du Nouveau Lieu")
+                    nl = st.text_input("Nouveau Lieu")
                     if st.form_submit_button("Ajouter"):
                         supabase.table("lieux").insert({"nom": nl, "est_actif": True, "capacite_accueil": 10}).execute(); st.rerun()
             with cl2:
@@ -248,13 +251,12 @@ elif menu == "🔐 Administration":
                         supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); st.rerun()
 
         with t_ad4: # SÉCURITÉ
-            st.subheader("⚙️ Code Secret Administrateur")
+            st.subheader("⚙️ Code Administrateur")
             with st.form("f_sec"):
                 o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
-                if st.form_submit_button("Modifier le code"):
+                if st.form_submit_button("Changer le code"):
                     if o == current_code:
                         supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
-                        st.success("Code modifié !"); st.rerun()
+                        st.success("Code modifié ! Pour des raisons de sécurité, reconnectez-vous."); st.rerun()
                     else: st.error("L'ancien code est incorrect.")
-    else: st.info("Saisissez le code secret pour accéder à l'administration.")
-        
+    else: st.info("Saisissez le code secret administrateur.")
