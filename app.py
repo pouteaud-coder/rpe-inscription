@@ -14,30 +14,30 @@ def get_color(nom_lieu):
     hex_hash = hash_object.hexdigest()
     return f"#{hex_hash[:6]}"
 
-# --- STYLE CSS AJUSTÉ (Texte plus petit que la date) ---
+# --- STYLE CSS ---
 st.markdown("""
     <style>
-    html, body, [class*="st-"] { font-size: 1.05rem !important; } /* Taille de base (Dates) */
-    [data-testid="stSidebarNav"] span { font-size: 1.1rem !important; font-weight: 500; }
+    html, body, [class*="st-"] { font-size: 1.05rem !important; }
     
-    .lieu-badge { padding: 4px 12px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.9rem; display: inline-block; margin: 2px 0; }
+    /* Badge Lieu : légèrement réduit */
+    .lieu-badge { padding: 3px 10px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.85rem; display: inline-block; margin: 2px 0; }
+    
+    /* Horaire : Taille réduite pour être plus discret que la date */
+    .horaire-text { font-size: 0.9rem; color: #666; font-weight: 400; }
+    
     .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
     
-    /* Taille discrète pour les inscrits (plus petite que la date) */
+    /* Style pour les inscrits : petit et collé */
     .liste-inscrits { 
         font-size: 0.95rem !important; 
-        font-weight: 400; 
-        margin-left: 20px;
-        line-height: 1.4;
         color: #555;
+        margin-left: 20px;
+        display: block; 
+        line-height: 1.2;
     }
-    .nb-enfants-focus { color: #2e7d32; font-weight: 600; font-size: 0.95rem; }
+    .nb-enfants-focus { color: #2e7d32; font-weight: 600; }
 
-    /* Boutons alignés à gauche */
-    .stButton button { 
-        border-radius: 8px !important;
-        min-width: 200px !important;
-    }
+    .stButton button { border-radius: 8px !important; min-width: 200px !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -155,7 +155,7 @@ elif menu == "📊 Suivi & Récap":
                 curr_u = nom_u
             at = i['ateliers']
             c_l = get_color(at['lieux']['nom'])
-            st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+            st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
 
     with t2:
         c_d1, c_d2 = st.columns(2)
@@ -166,14 +166,19 @@ elif menu == "📊 Suivi & Récap":
             
         for a in ats_raw.data:
             c_l = get_color(a['lieux']['nom'])
-            st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | {a['horaires']['libelle']}", unsafe_allow_html=True)
+            # Date en gras, Lieu et Horaire réduits
+            st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span>", unsafe_allow_html=True)
+            
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
             if not ins_at.data: 
-                st.write("  <small>Aucun inscrit</small>", unsafe_allow_html=True)
+                st.markdown("<span style='font-size:0.85rem; margin-left:20px; color:gray;'>Aucun inscrit</span>", unsafe_allow_html=True)
             else:
+                html_inscrits = ""
                 for p in ins_at.data:
-                    # Rendu final : Texte discret et élégant
-                    st.markdown(f'<div class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></div>', unsafe_allow_html=True)
+                    html_inscrits += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
+                st.markdown(html_inscrits, unsafe_allow_html=True)
+            
+            st.write("") 
 
 # ==========================================
 # SECTION 🔐 ADMINISTRATION
@@ -214,7 +219,6 @@ elif menu == "🔐 Administration":
                 if at_rep:
                     df_rep = pd.DataFrame([{"Date": format_date_fr_complete(a['date_atelier'], gras=True), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Actif": a['est_actif']} for a in at_rep])
                     edited_df = st.data_editor(df_rep, hide_index=True, use_container_width=True)
-                    
                     if st.button("💾 Sauvegarder", type="primary"):
                         for idx, row in edited_df.iterrows():
                             at_id = at_rep[idx]['id']
