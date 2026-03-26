@@ -6,18 +6,12 @@ import re
 import hashlib
 import io
 
-# --- TENTATIVE D'IMPORTATION SÉCURISÉE DES MODULES D'EXPORT ---
+# --- IMPORTATIONS SÉCURISÉES ---
 try:
     from fpdf import FPDF
     PDF_READY = True
-except ImportError:
+except:
     PDF_READY = False
-
-try:
-    import xlsxwriter
-    EXCEL_READY = True
-except ImportError:
-    EXCEL_READY = False
 
 # 1. Configuration de la page
 st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
@@ -60,22 +54,28 @@ def get_secret_code():
 # --- EXPORTS ---
 def export_excel(df):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-    return output.getvalue()
+    try:
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False)
+        return output.getvalue()
+    except: return None
 
 def export_pdf(df, title):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
-    pdf.set_font("Arial", "", 9)
-    for _, row in df.iterrows():
-        line = " | ".join([str(v) for v in row])
-        pdf.cell(0, 8, line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
-    return pdf.output(dest="S").encode("latin-1")
+    if not PDF_READY: return None
+    try:
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
+        pdf.ln(5)
+        pdf.set_font("Arial", "", 9)
+        for _, row in df.iterrows():
+            line = " | ".join([str(v) for v in row])
+            pdf.cell(0, 8, line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+        return pdf.output(dest="S").encode("latin-1")
+    except: return None
 
-# --- INITIALISATION ---
+# --- INITIALISATION DES DONNÉES ---
 current_code = get_secret_code()
 res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").order("prenom").execute()
 dict_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
@@ -87,7 +87,7 @@ liste_lieux = [l['nom'] for l in res_lieux.data]
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "📊 Suivi & Récap", "🔐 Administration"])
 
 # ==========================================
-# SECTION 📝 INSCRIPTIONS
+# SECTION 📝 INSCRIPTIONS (Restaurée)
 # ==========================================
 if menu == "📝 Inscriptions":
     st.header("📍 Inscriptions")
@@ -98,8 +98,12 @@ if menu == "📝 Inscriptions":
             ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", at['id']).execute()
             occ = sum([(1 + i['nb_enfants']) for i in ins.data])
             rest = at['capacite_max'] - occ
-            with st.expander(f"{format_date_fr(at['date_atelier'])} — {at['titre']} ({rest} pl.)"):
-                for i in ins.data: st.write(f"• {i['adherents']['prenom']} {i['adherents']['nom']} ({i['nb_enfants']} enf.)")
+            status = "alerte-rouge" if rest <= 0 else ("alerte-orange" if rest <= 3 else "")
+            
+            with st.expander(f"{format_date_fr(at['date_atelier'])} — {at['titre']} ({rest} pl. libres)"):
+                for i in ins.data:
+                    st.write(f"• {i['adherents']['prenom']} {i['adherents']['nom']} ({i['nb_enfants']} enf.)")
+                st.markdown("---")
                 c1, c2, c3 = st.columns([2,1,1])
                 qui = c1.selectbox("Qui ?", ["Choisir..."] + liste_adh, key=f"q_{at['id']}")
                 nbe = c2.number_input("Enfants", 1, 10, 1, key=f"e_{at['id']}")
@@ -108,56 +112,83 @@ if menu == "📝 Inscriptions":
                     st.rerun()
 
 # ==========================================
-# SECTION 📊 SUIVI & RÉCAP
+# SECTION 📊 SUIVI & RÉCAP (Restaurée)
 # ==========================================
 elif menu == "📊 Suivi & Récap":
-    st.header("🔎 Consultation")
+    st.header("🔎 Consultation & Bilans")
     t1, t2 = st.tabs(["👤 Par Adhérente", "📅 Par Atelier"])
     
     with t1:
-        choix = st.multiselect("Filtrer :", liste_adh)
+        choix = st.multiselect("Filtrer par personne :", liste_adh)
         ids = [dict_adh[n] for n in choix] if choix else list(dict_adh.values())
-        data = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom)), adherents(nom, prenom)").in_("adherent_id", ids).execute()
+        data_u = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom)), adherents(nom, prenom)").in_("adherent_id", ids).execute()
         df_adh = []
-        for i in data.data:
-            st.write(f"**{i['adherents']['prenom']} {i['adherents']['nom']}** : {i['ateliers']['date_atelier']} ({i['nb_enfants']} enfants)")
-            df_adh.append({"Nom": f"{i['adherents']['prenom']} {i['adherents']['nom']}", "Date": i['ateliers']['date_atelier'], "Enfants": i['nb_enfants']})
+        for i in data_u.data:
+            st.write(f"**{i['adherents']['prenom']} {i['adherents']['nom']}** : {format_date_fr(i['ateliers']['date_atelier'])} ({i['nb_enfants']} enf.)")
+            df_adh.append({"Adhérent": f"{i['adherents']['prenom']} {i['adherents']['nom']}", "Date": i['ateliers']['date_atelier'], "Lieu": i['ateliers']['lieux']['nom'], "Enfants": i['nb_enfants']})
         
-        if df_adh and EXCEL_READY and PDF_READY:
+        if df_adh:
+            st.write("---")
             c1, c2 = st.columns(2)
-            c1.download_button("Excel", export_excel(pd.DataFrame(df_adh)), "Export.xlsx")
-            c2.download_button("PDF", export_pdf(pd.DataFrame(df_adh), "Récap"), "Export.pdf")
+            xlsx = export_excel(pd.DataFrame(df_adh))
+            if xlsx: c1.download_button("📥 Excel", xlsx, "Suivi_Adherents.xlsx")
+            pdf = export_pdf(pd.DataFrame(df_adh), "Récapitulatif Adhérents")
+            if pdf: c2.download_button("📄 PDF", pdf, "Suivi_Adherents.pdf")
 
     with t2:
-        d_s = st.date_input("Du", date.today())
-        ats_r = supabase.table("ateliers").select("*, lieux(nom)").gte("date_atelier", str(d_s)).execute()
+        c_d1, c_d2 = st.columns(2)
+        d_start = c_d1.date_input("Du", date.today())
+        d_end = c_d2.date_input("Au", d_start + timedelta(days=30))
+        ats_r = supabase.table("ateliers").select("*, lieux(nom)").gte("date_atelier", str(d_start)).lte("date_atelier", str(d_end)).execute()
         df_at = []
         for a in ats_r.data:
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
             occ = sum([(1 + i['nb_enfants']) for i in ins_at.data])
-            st.markdown(f"{format_date_fr(a['date_atelier'])} | **{a['lieux']['nom']}** | Libres: {a['capacite_max'] - occ}", unsafe_allow_html=True)
+            st.markdown(f"**{format_date_fr(a['date_atelier'])}** | {a['lieux']['nom']} | Libres: {a['capacite_max'] - occ}")
             for p in ins_at.data:
                 n = f"{p['adherents']['prenom']} {p['adherents']['nom']}"
                 st.write(f" > {n} ({p['nb_enfants']} enf.)")
-                df_at.append({"Atelier": a['date_atelier'], "Lieu": a['lieux']['nom'], "Inscrit": n})
+                df_at.append({"Date": a['date_atelier'], "Lieu": a['lieux']['nom'], "Inscrit": n, "Enfants": p['nb_enfants']})
         
-        if df_at and EXCEL_READY:
-            st.download_button("Export Atelier (Excel)", export_excel(pd.DataFrame(df_at)), "Ateliers.xlsx")
+        if df_at:
+            st.write("---")
+            xlsx_at = export_excel(pd.DataFrame(df_at))
+            if xlsx_at: st.download_button("📥 Télécharger le bilan (Excel)", xlsx_at, "Bilan_Ateliers.xlsx")
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION
+# SECTION 🔐 ADMINISTRATION (Restaurée)
 # ==========================================
 elif menu == "🔐 Administration":
-    st.header("🔐 Paramètres")
-    pw = st.text_input("Code", type="password")
+    st.header("🔐 Espace Administration")
+    pw = st.text_input("Code secret", type="password")
     if pw == current_code:
-        st.success("Accès Admin")
-        tab_a, tab_b = st.tabs(["👥 Adhérents", "⚙️ Sécurité"])
-        with tab_a:
-            with st.form("new"):
+        t_ad1, t_ad2, t_ad3 = st.tabs(["🏗️ Ateliers", "👥 Adhérents", "📍 Lieux"])
+        
+        with t_ad1:
+            st.subheader("Générateur d'ateliers")
+            c1, c2 = st.columns(2)
+            d_gen = c1.date_input("Date de l'atelier", date.today())
+            l_gen = c2.selectbox("Lieu", liste_lieux)
+            titre = st.text_input("Nom de l'atelier", "Atelier Jeux")
+            capa = st.number_input("Capacité max (Adul+Enf)", 1, 30, 12)
+            if st.button("➕ Créer l'atelier"):
+                supabase.table("ateliers").insert({"titre": titre, "date_atelier": str(d_gen), "lieu_id": [l['id'] for l in res_lieux.data if l['nom']==l_gen][0], "capacite_max": capa, "est_actif": True}).execute()
+                st.success("Atelier créé !"); st.rerun()
+
+        with t_ad2:
+            st.subheader("Nouveau membre")
+            with st.form("new_u"):
                 n = st.text_input("Nom"); p = st.text_input("Prénom")
                 if st.form_submit_button("Ajouter"):
-                    supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute(); st.rerun()
+                    supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute()
+                    st.rerun()
+            st.write("---")
             for ad in res_adh.data:
                 st.write(f"• {ad['prenom']} {ad['nom']}")
-    else: st.info("Veuillez saisir le code secret.")
+
+        with t_ad3:
+            st.subheader("Gestion des Lieux")
+            for l in res_lieux.data:
+                st.write(f"🏠 {l['nom']} (Capacité par défaut : {l.get('capacite_accueil', 'N/A')})")
+    else:
+        st.info("Veuillez saisir le code secret administrateur.")
