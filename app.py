@@ -10,30 +10,39 @@ st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
 
 # --- SYSTÈME DE COULEURS DYNAMIQUES PAR LIEU ---
 def get_color(nom_lieu):
-    """Génère une couleur unique et stable pour chaque nom de lieu"""
     hash_object = hashlib.md5(str(nom_lieu).upper().strip().encode())
     hex_hash = hash_object.hexdigest()
-    # On génère une couleur typée "Pastel/Sombre" pour que le texte blanc reste lisible
     return f"#{hex_hash[:6]}"
 
-# --- STYLE CSS (Police + Mobile + Tableaux) ---
+# --- STYLE CSS (Police + Boutons + Consultation) ---
 st.markdown("""
     <style>
     html, body, [class*="st-"] { font-size: 1.05rem !important; }
     [data-testid="stSidebarNav"] span { font-size: 1.1rem !important; font-weight: 500; }
     .stRadio div[role="radiogroup"] label { font-size: 1.2rem !important; padding-bottom: 10px; }
-    .st-emotion-cache-p5m613 p { white-space: normal !important; line-height: 1.5 !important; font-size: 1.05rem !important; }
+    
     .lieu-badge { padding: 4px 12px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.9rem; display: inline-block; margin: 2px 0; }
     .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
     
-    /* Correction pour les colonnes sur Mobile */
-    [data-testid="column"] { min-width: 0px !important; flex-basis: auto !important; }
+    /* Style spécifique pour la liste des inscrits (Consultation) */
+    .liste-inscrits { 
+        font-size: 1.15rem !important; 
+        font-weight: 500; 
+        margin-left: 15px;
+        line-height: 1.8;
+    }
+    .nb-enfants-focus { color: #1b5e20; font-weight: bold; }
+
+    /* Décalage des boutons vers la droite en Administration */
+    .admin-btn-container {
+        margin-left: 20%; /* Décalage vers la droite */
+        width: 60%;      /* Largeur contrôlée */
+    }
     
-    /* Bouton poubelle (Inscriptions) */
-    .stButton button { padding: 0px 5px !important; height: 32px !important; width: 40px !important; border: none !important; background-color: transparent !important; font-size: 1.2rem !important; }
-    
-    /* Bouton Sauvegarde Admin (plus large) */
-    .save-btn button { width: 100% !important; background-color: #2e7d32 !important; color: white !important; height: 45px !important; font-weight: bold !important; margin-top: 15px !important; }
+    /* Bouton stylisé */
+    .stButton button { 
+        border-radius: 8px !important;
+    }
     
     button[data-baseweb="tab"] div { font-size: 1.1rem !important; }
     </style>
@@ -149,7 +158,7 @@ elif menu == "📊 Suivi & Récap":
         for i in data.data:
             nom_u = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
             if nom_u != curr_u:
-                st.markdown(f"<div class='nom-header'>{nom_u}</div>", unsafe_allow_html=True)
+                st.markdown(f<div class="nom-header">{nom_u}</div>, unsafe_allow_html=True)
                 curr_u = nom_u
             at = i['ateliers']
             c_l = get_color(at['lieux']['nom'])
@@ -157,7 +166,6 @@ elif menu == "📊 Suivi & Récap":
 
     with t2:
         c_d1, c_d2 = st.columns(2)
-        # Format FR forcé dans le widget
         d_start = c_d1.date_input("Du", date.today(), format="DD/MM/YYYY")
         d_end = c_d2.date_input("Au", d_start + timedelta(days=30), format="DD/MM/YYYY")
         
@@ -167,9 +175,12 @@ elif menu == "📊 Suivi & Récap":
             c_l = get_color(a['lieux']['nom'])
             st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | {a['horaires']['libelle']}", unsafe_allow_html=True)
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
-            if not ins_at.data: st.write("  <small>Aucun inscrit</small>", unsafe_allow_html=True)
-            for p in ins_at.data:
-                st.write(f"  <small>• {p['adherents']['prenom']} {p['adherents']['nom']} ({p['nb_enfants']} enf.)</small>", unsafe_allow_html=True)
+            if not ins_at.data: 
+                st.write("  <small>Aucun inscrit</small>", unsafe_allow_html=True)
+            else:
+                for p in ins_at.data:
+                    # Affichage plus grand et ciblé pour les inscrits
+                    st.markdown(f'<div class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></div>', unsafe_allow_html=True)
 
 # ==========================================
 # SECTION 🔐 ADMINISTRATION
@@ -191,16 +202,21 @@ elif menu == "🔐 Administration":
                 d1 = c_g1.date_input("Début", date.today(), format="DD/MM/YYYY")
                 d2 = c_g2.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
                 js_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
-                if st.button("📊 Générer la liste"):
+                
+                # Bouton décalé à droite
+                st.markdown('<div class="admin-btn-container">', unsafe_allow_html=True)
+                if st.button("📊 Générer la liste des ateliers", use_container_width=True):
                     tmp = []; curr = d1; js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                     while curr <= d2:
                         if js_fr[curr.weekday()] in js_sel:
                             tmp.append({"Date": format_date_fr_complete(curr, gras=True), "Titre": "", "Lieu": l_list[0] if l_list else "", "Horaire": h_list[0] if h_list else "", "Capacité": 10, "Actif": True})
                         curr += timedelta(days=1)
                     st.session_state['at_list'] = tmp; st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+
                 if st.session_state['at_list']:
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, use_container_width=True)
-                    if st.button("✅ Enregistrer les nouveaux ateliers"):
+                    if st.button("✅ Enregistrer définitivement"):
                         to_db = [{"date_atelier": parse_date_fr_to_iso(r['Date']), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": int(r['Capacité']), "est_actif": True} for _, r in res_gen.iterrows() if r['Titre'] != ""]
                         if to_db: supabase.table("ateliers").insert(to_db).execute(); st.session_state['at_list'] = []; st.rerun()
             else: 
@@ -209,9 +225,9 @@ elif menu == "🔐 Administration":
                     df_rep = pd.DataFrame([{"Date": format_date_fr_complete(a['date_atelier'], gras=True), "Titre": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'], "Actif": a['est_actif']} for a in at_rep])
                     edited_df = st.data_editor(df_rep, hide_index=True, use_container_width=True)
                     
-                    # Bouton stylisé et déplacé pour être accessible
-                    st.markdown('<div class="save-btn">', unsafe_allow_html=True)
-                    if st.button("💾 Sauvegarder les modifications du répertoire"):
+                    # Bouton décalé à droite
+                    st.markdown('<div class="admin-btn-container">', unsafe_allow_html=True)
+                    if st.button("💾 Sauvegarder les modifications du répertoire", use_container_width=True, type="primary"):
                         for idx, row in edited_df.iterrows():
                             at_id = at_rep[idx]['id']
                             supabase.table("ateliers").update({"titre": row['Titre'], "est_actif": bool(row['Actif'])}).eq("id", at_id).execute()
@@ -257,6 +273,6 @@ elif menu == "🔐 Administration":
                 if st.form_submit_button("Changer le code"):
                     if o == current_code:
                         supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
-                        st.success("Code modifié ! Pour des raisons de sécurité, reconnectez-vous."); st.rerun()
+                        st.success("Code modifié !"); st.rerun()
                     else: st.error("L'ancien code est incorrect.")
     else: st.info("Saisissez le code secret administrateur.")
