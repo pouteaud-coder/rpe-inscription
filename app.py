@@ -7,27 +7,27 @@ import re
 # 1. Configuration de la page
 st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
 
-# --- SYSTÈME DE COULEURS ET ÉMOJIS POUR LES LIEUX ---
-MAP_INFOS_LIEUX = {
-    "POISSY": {"color": "#d32f2f", "emoji": "🔴"},
-    "CARRIÈRES": {"color": "#1976d2", "emoji": "🔵"},
-    "RAMBOUILLET": {"color": "#388e3c", "emoji": "🟢"},
-    "VERSAILLES": {"color": "#f57c00", "emoji": "🟠"},
-    "ST-GERMAIN": {"color": "#7b1fa2", "emoji": "🟣"},
-    "DEFAULT": {"color": "#6c757d", "emoji": "⚪"}
+# --- SYSTÈME DE COULEURS POUR LES LIEUX ---
+MAP_COULEURS = {
+    "POISSY": "#d32f2f",      # Rouge
+    "CARRIÈRES": "#1976d2",   # Bleu
+    "RAMBOUILLET": "#388e3c", # Vert
+    "VERSAILLES": "#f57c00",  # Orange
+    "ST-GERMAIN": "#7b1fa2",  # Violet
+    "DEFAULT": "#6c757d"      # Gris
 }
 
-def get_lieu_info(nom_lieu):
+def get_color(nom_lieu):
     nom_upper = str(nom_lieu).upper()
-    for clé, info in MAP_INFOS_LIEUX.items():
-        if clé in nom_upper: return info
-    return MAP_INFOS_LIEUX["DEFAULT"]
+    for clé, couleur in MAP_COULEURS.items():
+        if clé in nom_upper: return couleur
+    return MAP_COULEURS["DEFAULT"]
 
 # Style CSS
 st.markdown("""
     <style>
     .st-emotion-cache-p5m613 p { white-space: normal !important; line-height: 1.5 !important; }
-    .lieu-badge { padding: 2px 10px; border-radius: 12px; color: white; font-weight: bold; font-size: 0.85rem; display: inline-block; margin: 2px; }
+    .lieu-badge { padding: 2px 10px; border-radius: 4px; color: white; font-weight: bold; font-size: 0.85rem; display: inline-block; }
     .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.1rem; }
     .suivi-ligne { padding: 10px 0px; border-bottom: 1px solid #eee; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
     </style>
@@ -64,7 +64,7 @@ def parse_date_fr_to_iso(date_str):
     return str(date.today())
 
 # --- DIALOGUES DE SÉCURITÉ ---
-@st.dialog("⚠️ Confirmation de sécurité")
+@st.dialog("⚠️ Confirmation")
 def secure_delete_dialog(table, item_id, label, current_code):
     st.warning(f"Désactivation de : **{label}**")
     confirm_pw = st.text_input("Code administrateur", type="password")
@@ -100,20 +100,17 @@ if menu == "📝 Inscriptions":
             total_occ = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_ins.data])
             restantes = at['capacite_max'] - total_occ
             
-            # Couleur dynamique pour les places
+            # Affichage dynamique des places
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
-            info_l = get_lieu_info(at['lieux']['nom'])
             
-            # Label accordéon
+            # Label accordéon (Date en gras | Lieu | Horaire | Places)
             date_f = format_date_fr_complete(at['date_atelier'], gras=True)
-            titre_label = f"{date_f} — {at['titre']}\n{info_l['emoji']} {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
+            titre_label = f"{date_f} — {at['titre']}\n📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
             
             with st.expander(titre_label):
-                st.markdown(f"<span class='lieu-badge' style='background-color:{info_l['color']}'>📍 {at['lieux']['nom']}</span>", unsafe_allow_html=True)
-                
                 if res_ins.data:
                     for i in res_ins.data:
-                        c_txt, c_btn = st.columns([4, 1])
+                        c_txt, c_btn = st.columns([5, 1])
                         n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
                         c_txt.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
                         if c_btn.button("🗑️", key=f"del_{i['id']}"):
@@ -155,12 +152,12 @@ elif menu == "📊 Suivi & Récap":
                 curr_u = nom_u
             
             at = i['ateliers']
-            info_l = get_lieu_info(at['lieux']['nom'])
+            c_lieu = get_color(at['lieux']['nom'])
             st.markdown(f"""
                 <div class='suivi-ligne'>
                     <span style='min-width:180px'>{format_date_fr_complete(at['date_atelier'], gras=True)}</span>
                     <span style='flex-grow:1'>{at['titre']} 
-                        <span class='lieu-badge' style='background-color:{info_l['color']}'>{info_l['emoji']} {at['lieux']['nom']}</span>
+                        <span class='lieu-badge' style='background-color:{c_lieu}'>{at['lieux']['nom']}</span>
                         <small style='color:#666'>({at['horaires']['libelle']})</small>
                     </span>
                     <span style='font-weight:bold; color:#2e7d32'>👶 {i['nb_enfants']} enfants</span>
@@ -171,11 +168,11 @@ elif menu == "📊 Suivi & Récap":
         today = str(date.today())
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today).order("date_atelier").execute()
         for a in ats_raw.data:
-            info_l = get_lieu_info(a['lieux']['nom'])
+            c_lieu = get_color(a['lieux']['nom'])
             st.markdown(f"""
                 <div style='margin-top:20px'>
                     {format_date_fr_complete(a['date_atelier'], gras=True)} | 
-                    <span class='lieu-badge' style='background-color:{info_l['color']}'>{info_l['emoji']} {a['lieux']['nom']}</span> | 
+                    <span class='lieu-badge' style='background-color:{c_lieu}'>{a['lieux']['nom']}</span> | 
                     <b>{a['horaires']['libelle']}</b><br>
                     <small>{a['titre']}</small>
                 </div>
@@ -197,10 +194,8 @@ elif menu == "🔐 Administration":
         with t1: # GESTION ATELIERS
             l_raw = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
             h_raw = supabase.table("horaires").select("*").eq("est_actif", True).execute().data
-            l_list = [l['nom'] for l in l_raw]
-            h_list = [h['libelle'] for h in h_raw]
-            map_l_id = {l['nom']: l['id'] for l in l_raw}
-            map_h_id = {h['libelle']: h['id'] for h in h_raw}
+            l_list = [l['nom'] for l in l_raw]; h_list = [h['libelle'] for h in h_raw]
+            map_l_id = {l['nom']: l['id'] for l in l_raw}; map_h_id = {h['libelle']: h['id'] for h in h_raw}
             
             sub = st.radio("Mode", ["Générateur", "Répertoire"], horizontal=True)
             if sub == "Générateur":
@@ -227,24 +222,21 @@ elif menu == "🔐 Administration":
 
         with t2: # ADHÉRENTS
             with st.form("add_adh"):
-                col1, col2 = st.columns(2)
-                n = col1.text_input("Nom"); p = col2.text_input("Prénom")
+                col1, col2 = st.columns(2); n = col1.text_input("Nom"); p = col2.text_input("Prénom")
                 if st.form_submit_button("Ajouter"):
                     supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute(); st.rerun()
             for u in res_adh.data:
-                c1, c2 = st.columns([5, 1])
-                c1.write(f"**{u['nom']}** {u['prenom']}")
-                if c2.button("🗑️", key=f"u_{u['id']}"):
-                    secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
+                c1, c2 = st.columns([5, 1]); c1.write(f"**{u['nom']}** {u['prenom']}")
+                if c2.button("🗑️", key=f"u_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
 
         with t3: # LIEUX & HORAIRES
             cl1, cl2 = st.columns(2)
             with cl1:
                 st.subheader("Lieux")
                 for l in l_raw:
-                    inf = get_lieu_info(l['nom'])
+                    c_lieu = get_color(l['nom'])
                     c_a, c_b = st.columns([4, 1])
-                    c_a.markdown(f"<span class='lieu-badge' style='background-color:{inf['color']}'>{inf['emoji']} {l['nom']}</span>", unsafe_allow_html=True)
+                    c_a.markdown(f"<span class='lieu-badge' style='background-color:{c_lieu}'>{l['nom']}</span>", unsafe_allow_html=True)
                     if c_b.button("🗑️", key=f"l_{l['id']}"): secure_delete_dialog("lieux", l['id'], l['nom'], current_code)
                 with st.form("new_l"):
                     nl = st.text_input("Lieu")
@@ -253,8 +245,7 @@ elif menu == "🔐 Administration":
             with cl2:
                 st.subheader("Horaires")
                 for h in h_raw:
-                    c_c, c_d = st.columns([4, 1])
-                    c_c.write(f"• {h['libelle']}")
+                    c_c, c_d = st.columns([4, 1]); c_c.write(f"• {h['libelle']}")
                     if c_d.button("🗑️", key=f"h_{h['id']}"): secure_delete_dialog("horaires", h['id'], h['libelle'], current_code)
                 with st.form("new_h"):
                     nh = st.text_input("Libellé")
