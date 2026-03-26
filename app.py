@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import re
-import calendar
 
 # 1. Configuration
 st.set_page_config(page_title="RPE Connect - Gestion Master", page_icon="🌿", layout="wide")
@@ -137,18 +136,31 @@ elif menu == "🔐 Administration":
                             st.session_state['at_list'] = new_list; st.rerun()
 
             else:
-                # RÉPERTOIRE AVEC FILTRES CALCULES N-2 / N+2
+                # RÉPERTOIRE AVEC FILTRES M-2 / M+2
                 today = date.today()
                 
-                # Calcul Début : 1er jour de (Mois actuel - 2 mois)
-                # On utilise timedelta pour reculer d'environ 60 jours puis on force le jour à 1
-                start_raw = (today.replace(day=1) - timedelta(days=45)).replace(day=1) # M-1
-                default_start = (start_raw - timedelta(days=1)).replace(day=1) # M-2
+                # Calcul M-2 (1er jour)
+                m_minus_2 = today.month - 2
+                y_start = today.year
+                if m_minus_2 <= 0:
+                    m_minus_2 += 12
+                    y_start -= 1
+                default_start = date(y_start, m_minus_2, 1)
                 
-                # Calcul Fin : Dernier jour de (Mois actuel + 2 mois)
-                # On avance de 3 mois et on recule d'un jour par rapport au 1er
-                month_plus_3 = (today.replace(day=1) + timedelta(days=95)).replace(day=1)
-                default_end = month_plus_3 - timedelta(days=1)
+                # Calcul M+2 (Dernier jour)
+                m_plus_2 = today.month + 2
+                y_end = today.year
+                if m_plus_2 > 12:
+                    m_plus_2 -= 12
+                    y_end += 1
+                
+                # Pour trouver le dernier jour de M+2, on va au 1er du mois suivant et on retire 1 jour
+                m_next = m_plus_2 + 1
+                y_next = y_end
+                if m_next > 12:
+                    m_next = 1
+                    y_next += 1
+                default_end = date(y_next, m_next, 1) - timedelta(days=1)
 
                 st.subheader("🔍 Filtres de recherche")
                 c_f1, c_f2, c_f3 = st.columns([2, 1.5, 1.5])
