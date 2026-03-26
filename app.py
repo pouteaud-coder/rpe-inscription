@@ -14,24 +14,25 @@ def get_color(nom_lieu):
     hex_hash = hash_object.hexdigest()
     return f"#{hex_hash[:6]}"
 
-# --- STYLE CSS (Ajusté pour coller les inscrits à la date) ---
+# --- STYLE CSS ---
 st.markdown("""
     <style>
     html, body, [class*="st-"] { font-size: 1.05rem !important; }
     
     .lieu-badge { padding: 3px 10px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.85rem; display: inline-block; margin: 2px 0; }
     .horaire-text { font-size: 0.9rem; color: #666; font-weight: 400; }
-    .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
     
-    /* Style pour les inscrits : remonté au maximum */
-    .container-inscrits { margin-top: -5px; padding-top: 0; }
+    /* Séparateur discret entre les ateliers */
+    .separateur-atelier { border: 0; border-top: 1px solid #eee; margin: 15px 0; }
+    
+    /* Style pour les inscrits : compacté et remonté */
+    .container-inscrits { margin-top: -8px; padding-top: 0; margin-bottom: 5px; }
     .liste-inscrits { 
         font-size: 0.95rem !important; 
         color: #555;
         margin-left: 20px;
         display: block; 
-        line-height: 1.1; /* Réduit pour compacter verticalement */
-        margin-bottom: 2px;
+        line-height: 1.1;
     }
     .nb-enfants-focus { color: #2e7d32; font-weight: 600; }
 
@@ -149,7 +150,7 @@ elif menu == "📊 Suivi & Récap":
         for i in data.data:
             nom_u = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
             if nom_u != curr_u:
-                st.markdown(f'<div class="nom-header">{nom_u}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="nom-header" style="color:#1b5e20; border-bottom:2px solid #1b5e20; padding-top:15px; margin-bottom:8px; font-weight:bold; font-size:1.2rem;">{nom_u}</div>', unsafe_allow_html=True)
                 curr_u = nom_u
             at = i['ateliers']
             c_l = get_color(at['lieux']['nom'])
@@ -162,13 +163,13 @@ elif menu == "📊 Suivi & Récap":
         
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_start)).lte("date_atelier", str(d_end)).order("date_atelier").execute()
             
-        for a in ats_raw.data:
+        for index, a in enumerate(ats_raw.data):
             c_l = get_color(a['lieux']['nom'])
+            # Ligne de la Date
             st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span>", unsafe_allow_html=True)
             
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
             
-            # Utilisation d'un container avec marge négative pour coller à la ligne du dessus
             if not ins_at.data: 
                 st.markdown("<div class='container-inscrits'><span style='font-size:0.85rem; margin-left:20px; color:gray;'>Aucun inscrit</span></div>", unsafe_allow_html=True)
             else:
@@ -178,8 +179,9 @@ elif menu == "📊 Suivi & Récap":
                 html_inscrits += "</div>"
                 st.markdown(html_inscrits, unsafe_allow_html=True)
             
-            # Espace avant l'atelier suivant
-            st.write("") 
+            # AJOUT DU TRAIT DE SÉPARATION (sauf après le dernier élément)
+            if index < len(ats_raw.data) - 1:
+                st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
 # ==========================================
 # SECTION 🔐 ADMINISTRATION
