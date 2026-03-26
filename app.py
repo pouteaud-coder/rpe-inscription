@@ -97,53 +97,66 @@ elif menu == "🔐 Administration":
                         js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                         while curr <= d2:
                             if js_fr[curr.weekday()] in js_sel:
-                                tmp.append({"Select": False, "Date": format_date_fr(curr), "Titre": "", "Lieu": l_list[0], "Horaire": h_list[0], "Capacité": map_capa[l_list[0]], "Actif": True})
+                                # On force la capacité du premier lieu par défaut
+                                capa_defaut = map_capa.get(l_list[0], 10)
+                                tmp.append({"Select": False, "Date": format_date_fr(curr), "Titre": "", "Lieu": l_list[0], "Horaire": h_list[0], "Capacité": capa_defaut, "Actif": True})
                             curr += timedelta(days=1)
                         st.session_state['at_list'] = tmp
                         st.rerun()
 
                 if st.session_state['at_list']:
-                    # On affiche le tableau. Les modifications sont capturées dans res_gen
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, num_rows="dynamic", column_config=conf, key="ed_gen")
                     
                     c_save, c_plus, c_del = st.columns([1, 1.5, 2])
                     
                     if c_save.button("✅ Enregistrer tout le mois"):
                         to_db = []
-                        # CRUCIAL : On boucle sur res_gen (données éditées) et non st.session_state
                         for _, r in res_gen.iterrows():
-                            if str(r['Titre']).strip() != "" and not r['Select']:
+                            # Sécurité : On ne prend que les lignes avec un titre et non sélectionnées pour suppression
+                            titre_clean = str(r['Titre']).strip()
+                            if titre_clean != "" and titre_clean != "None" and not r['Select']:
+                                # Correction dynamique de la capacité au cas où l'utilisateur l'aurait effacée
+                                final_capa = int(r['Capacité']) if pd.notnull(r['Capacité']) else map_capa.get(r['Lieu'], 10)
+                                
                                 to_db.append({
                                     "date_atelier": parse_date_fr_to_iso(r['Date']), 
-                                    "titre": r['Titre'], 
+                                    "titre": titre_clean, 
                                     "lieu_id": map_l_id[r['Lieu']], 
                                     "horaire_id": map_h_id[r['Horaire']], 
-                                    "capacite_max": r['Capacité'], 
-                                    "est_actif": r['Actif']
+                                    "capacite_max": final_capa, 
+                                    "est_actif": bool(r['Actif'])
                                 })
                         
                         if to_db:
-                            supabase.table("ateliers").insert(to_db).execute()
-                            st.session_state['at_list'] = []
-                            st.success(f"✅ {len(to_db)} ateliers enregistrés avec succès !")
-                            st.rerun()
+                            try:
+                                supabase.table("ateliers").insert(to_db).execute()
+                                st.session_state['at_list'] = []
+                                st.success(f"✅ {len(to_db)} ateliers enregistrés !")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur base de données : {e}")
                         else:
-                            st.error("❌ Aucun atelier n'a été enregistré. Vérifiez que vous avez bien saisi des TITRES.")
+                            st.warning("⚠️ Remplissez les titres avant d'enregistrer.")
 
                     if c_plus.button("➕ Ajouter une ligne"):
-                        # Mise à jour de la liste avec les saisies actuelles avant d'ajouter
-                        current_data = res_gen.to_dict(orient='records')
-                        current_data.append({"Select": False, "Date": format_date_fr(date.today()), "Titre": "", "Lieu": l_list[0], "Horaire": h_list[0], "Capacité": map_capa[l_list[0]], "Actif": True})
-                        st.session_state['at_list'] = current_data
+                        # Sauvegarde de l'état actuel pour ne pas perdre les saisies
+                        current_rows = res_gen.to_dict(orient='records')
+                        # Ajout d'une ligne avec capacité par défaut du premier lieu
+                        current_rows.append({
+                            "Select": False, "Date": format_date_fr(date.today()), 
+                            "Titre": "", "Lieu": l_list[0], "Horaire": h_list[0], 
+                            "Capacité": map_capa.get(l_list[0], 10), "Actif": True
+                        })
+                        st.session_state['at_list'] = current_rows
                         st.rerun()
 
-                    if c_del.button("🗑️ Retirer lignes sélectionnées"):
+                    if c_del.button("🗑️ Retirer sélection"):
                         new_list = res_gen[res_gen['Select'] == False].to_dict(orient='records')
                         st.session_state['at_list'] = new_list
                         st.rerun()
 
             else:
-                # RÉPERTOIRE (Tri chronologique croissant)
+                # RÉPERTOIRE M-2 / M+2
                 today = date.today()
                 m_min_2 = (today.replace(day=1) - timedelta(days=45)).replace(day=1) 
                 m_min_2 = (m_min_2 - timedelta(days=1)).replace(day=1) 
@@ -171,8 +184,9 @@ elif menu == "🔐 Administration":
                         for _, row in res_r[res_r['Select'] == False].iterrows():
                             try:
                                 supabase.table("ateliers").update({
-                                    "titre": row['Titre'], "lieu_id": map_l_id[row['Lieu']], "horaire_id": map_h_id[row['Horaire']], 
-                                    "capacite_max": row['Capacité'], "est_actif": row['Actif']
+                                    "titre": str(row['Titre']), "lieu_id": map_l_id[row['Lieu']], 
+                                    "horaire_id": map_h_id[row['Horaire']], "capacite_max": int(row['Capacité']), 
+                                    "est_actif": bool(row['Actif'])
                                 }).eq("id", int(row['ID'])).execute()
                             except: pass
                         st.success("Répertoire mis à jour !"); st.rerun()
@@ -216,4 +230,4 @@ elif menu == "🔐 Administration":
                     if o == current_code:
                         supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute(); st.rerun()
                     else: st.error("L'ancien code est incorrect.")
-    else: st.info("Veuillez saisir le code secret pour accéder à l'administration.")
+    else: st.info("Veuillez saisir le code secret.")
