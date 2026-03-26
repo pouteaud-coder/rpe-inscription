@@ -10,46 +10,12 @@ st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
 # Style CSS Adaptatif et Épuré
 st.markdown("""
     <style>
-    .suivi-ligne {
-        padding: 8px 0px;
-        border-bottom: 1px solid #eee;
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        font-size: 0.85rem;
-    }
-    .date-info {
-        font-weight: 600;
-        color: #444;
-        width: 120px;
-    }
-    .titre-info {
-        flex-grow: 1;
-        color: #222;
-    }
-    .badge-fin {
-        font-size: 0.7rem;
-        padding: 1px 5px;
-        border: 1px solid #ddd;
-        border-radius: 3px;
-        color: #777;
-        margin-left: 5px;
-        display: inline-block;
-    }
-    .nb-enfants {
-        font-weight: bold;
-        color: #2e7d32;
-        margin-left: auto;
-        padding-left: 10px;
-    }
-    .nom-header {
-        color: #1b5e20;
-        border-bottom: 1px solid #1b5e20;
-        padding-top: 15px;
-        margin-bottom: 8px;
-        font-size: 1rem;
-        font-weight: bold;
-    }
+    .suivi-ligne { padding: 8px 0px; border-bottom: 1px solid #eee; display: flex; flex-wrap: wrap; align-items: center; font-size: 0.85rem; }
+    .date-info { font-weight: 600; color: #444; width: 120px; }
+    .titre-info { flex-grow: 1; color: #222; }
+    .badge-fin { font-size: 0.7rem; padding: 1px 5px; border: 1px solid #ddd; border-radius: 3px; color: #777; margin-left: 5px; display: inline-block; }
+    .nb-enfants { font-weight: bold; color: #2e7d32; margin-left: auto; padding-left: 10px; }
+    .nom-header { color: #1b5e20; border-bottom: 1px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-size: 1rem; font-weight: bold; }
     @media (max-width: 768px) {
         .date-info { width: 100%; margin-bottom: 2px; font-size: 0.8rem; }
         .nb-enfants { width: 100%; margin-left: 0; margin-top: 5px; text-align: left; background: #f9f9f9; padding: 2px 5px; border-radius: 4px; }
@@ -87,6 +53,20 @@ def parse_date_fr_to_iso(date_str):
         return f"{y}-{mois_map.get(m, '01')}-{d.zfill(2)}"
     return str(date.today())
 
+# --- DIALOGUES DE SÉCURITÉ ---
+@st.dialog("⚠️ Confirmation de sécurité")
+def secure_delete_dialog(table, item_id, label, current_code):
+    st.warning(f"Vous allez désactiver : **{label}**")
+    st.write("Cet élément est actuellement lié à des données actives.")
+    confirm_pw = st.text_input("Saisissez le code administrateur pour confirmer", type="password")
+    if st.button("Confirmer la désactivation", type="primary"):
+        if confirm_pw == current_code:
+            supabase.table(table).update({"est_actif": False}).eq("id", item_id).execute()
+            st.success("Action effectuée.")
+            st.rerun()
+        else:
+            st.error("Code incorrect.")
+
 # --- SESSION STATE ---
 if 'at_list' not in st.session_state: st.session_state['at_list'] = []
 if 'u_opened_at' not in st.session_state: st.session_state['u_opened_at'] = None
@@ -117,7 +97,6 @@ if menu == "📝 Inscriptions":
             total_occ = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_ins.data])
             restantes = at['capacite_max'] - total_occ
             
-            # Persistance de l'accordéon
             est_ouvert = st.session_state['u_opened_at'] == at['id']
             label = f"{format_date_fr(at['date_atelier'])} - {at['titre']} ({restantes} pl.)"
             
@@ -230,24 +209,49 @@ elif menu == "🔐 Administration":
                 n, p = st.text_input("Nom"), st.text_input("Prénom")
                 if st.form_submit_button("Ajouter"):
                     supabase.table("adherents").insert({"nom": n.upper(), "prenom": p.capitalize(), "est_actif": True}).execute(); st.rerun()
+            
             for u in res_adh.data:
                 c1, c2 = st.columns([5, 1])
                 c1.write(f"**{u['nom']}** {u['prenom']}")
                 if c2.button("🗑️", key=f"u_{u['id']}"):
-                    supabase.table("adherents").update({"est_actif": False}).eq("id", u['id']).execute(); st.rerun()
+                    # VÉRIFICATION DE SÉCURITÉ : Inscriptions en cours ?
+                    check = supabase.table("inscriptions").select("id").eq("adherent_id", u['id']).execute()
+                    if check.data:
+                        secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
+                    else:
+                        supabase.table("adherents").update({"est_actif": False}).eq("id", u['id']).execute()
+                        st.rerun()
 
         with t3: # LIEUX/HORAIRES
             cl1, cl2 = st.columns(2)
             with cl1:
                 st.subheader("Lieux")
-                for l in l_raw: st.write(f"• {l['nom']} ({l['capacite_accueil']} pl.)")
+                for l in l_raw:
+                    col_a, col_b = st.columns([4,1])
+                    col_a.write(f"• {l['nom']} ({l['capacite_accueil']} pl.)")
+                    if col_b.button("🗑️", key=f"l_{l['id']}"):
+                        check_l = supabase.table("ateliers").select("id").eq("lieu_id", l['id']).eq("est_actif", True).execute()
+                        if check_l.data:
+                            secure_delete_dialog("lieux", l['id'], l['nom'], current_code)
+                        else:
+                            supabase.table("lieux").update({"est_actif": False}).eq("id", l['id']).execute()
+                            st.rerun()
                 with st.form("new_l"):
                     nl, cp = st.text_input("Lieu"), st.number_input("Capa", 1, 50, 10)
                     if st.form_submit_button("Ajouter"):
                         supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cp, "est_actif": True}).execute(); st.rerun()
             with cl2:
                 st.subheader("Horaires")
-                for h in h_raw: st.write(f"• {h['libelle']}")
+                for h in h_raw:
+                    col_c, col_d = st.columns([4,1])
+                    col_c.write(f"• {h['libelle']}")
+                    if col_d.button("🗑️", key=f"h_{h['id']}"):
+                        check_h = supabase.table("ateliers").select("id").eq("horaire_id", h['id']).eq("est_actif", True).execute()
+                        if check_h.data:
+                            secure_delete_dialog("horaires", h['id'], h['libelle'], current_code)
+                        else:
+                            supabase.table("horaires").update({"est_actif": False}).eq("id", h['id']).execute()
+                            st.rerun()
                 with st.form("new_h"):
                     nh = st.text_input("Horaire")
                     if st.form_submit_button("Ajouter"):
