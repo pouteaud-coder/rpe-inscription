@@ -14,26 +14,24 @@ def get_color(nom_lieu):
     hex_hash = hash_object.hexdigest()
     return f"#{hex_hash[:6]}"
 
-# --- STYLE CSS ---
+# --- STYLE CSS (Ajusté pour coller les inscrits à la date) ---
 st.markdown("""
     <style>
     html, body, [class*="st-"] { font-size: 1.05rem !important; }
     
-    /* Badge Lieu : légèrement réduit */
     .lieu-badge { padding: 3px 10px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.85rem; display: inline-block; margin: 2px 0; }
-    
-    /* Horaire : Taille réduite pour être plus discret que la date */
     .horaire-text { font-size: 0.9rem; color: #666; font-weight: 400; }
-    
     .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
     
-    /* Style pour les inscrits : petit et collé */
+    /* Style pour les inscrits : remonté au maximum */
+    .container-inscrits { margin-top: -5px; padding-top: 0; }
     .liste-inscrits { 
         font-size: 0.95rem !important; 
         color: #555;
         margin-left: 20px;
         display: block; 
-        line-height: 1.2;
+        line-height: 1.1; /* Réduit pour compacter verticalement */
+        margin-bottom: 2px;
     }
     .nb-enfants-focus { color: #2e7d32; font-weight: 600; }
 
@@ -166,18 +164,21 @@ elif menu == "📊 Suivi & Récap":
             
         for a in ats_raw.data:
             c_l = get_color(a['lieux']['nom'])
-            # Date en gras, Lieu et Horaire réduits
             st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span>", unsafe_allow_html=True)
             
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
+            
+            # Utilisation d'un container avec marge négative pour coller à la ligne du dessus
             if not ins_at.data: 
-                st.markdown("<span style='font-size:0.85rem; margin-left:20px; color:gray;'>Aucun inscrit</span>", unsafe_allow_html=True)
+                st.markdown("<div class='container-inscrits'><span style='font-size:0.85rem; margin-left:20px; color:gray;'>Aucun inscrit</span></div>", unsafe_allow_html=True)
             else:
-                html_inscrits = ""
+                html_inscrits = "<div class='container-inscrits'>"
                 for p in ins_at.data:
                     html_inscrits += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
+                html_inscrits += "</div>"
                 st.markdown(html_inscrits, unsafe_allow_html=True)
             
+            # Espace avant l'atelier suivant
             st.write("") 
 
 # ==========================================
