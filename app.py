@@ -23,32 +23,49 @@ def get_color(nom_lieu):
         if clé in nom_upper: return couleur
     return MAP_COULEURS["DEFAULT"]
 
-# --- STYLE CSS (Optimisation Mobile et Visuelle) ---
+# --- STYLE CSS (Optimisation Mobile, Visuelle et Taille de Police) ---
 st.markdown("""
     <style>
-    /* Permet au texte de s'adapter sans casser la mise en page */
-    .st-emotion-cache-p5m613 p { white-space: normal !important; line-height: 1.4 !important; }
+    /* 1. Augmentation globale de la police (Projet) */
+    html, body, [class*="st-"] {
+        font-size: 1.05rem !important; 
+    }
     
-    /* Badges de couleur pour les lieux */
-    .lieu-badge { padding: 2px 8px; border-radius: 4px; color: white; font-weight: bold; font-size: 0.8rem; display: inline-block; }
+    /* 2. Augmentation spécifique du menu de navigation (Sidebar) */
+    [data-testid="stSidebarNav"] span {
+        font-size: 1.1rem !important;
+        font-weight: 500;
+    }
+    .stRadio div[role="radiogroup"] label {
+        font-size: 1.2rem !important;
+        padding-bottom: 10px;
+    }
+
+    /* 3. Ajustements des éléments de texte et badges */
+    .st-emotion-cache-p5m613 p { white-space: normal !important; line-height: 1.5 !important; font-size: 1.05rem !important; }
+    .lieu-badge { padding: 3px 10px; border-radius: 4px; color: white; font-weight: bold; font-size: 0.9rem; display: inline-block; }
+    .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.2rem; }
     
-    /* Titres de sections dans le suivi */
-    .nom-header { color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-top: 15px; margin-bottom: 8px; font-weight: bold; font-size: 1.1rem; }
-    
-    /* FORCE l'alignement horizontal sur Mobile pour Nom + Poubelle */
+    /* 4. Force l'alignement horizontal Mobile (Nom + Poubelle) */
     [data-testid="column"] {
         min-width: 0px !important;
         flex-basis: auto !important;
     }
     
-    /* Bouton poubelle ultra compact */
+    /* 5. Bouton poubelle ultra compact */
     .stButton button {
         padding: 0px 5px !important;
-        height: 28px !important;
-        min-height: 28px !important;
-        width: 35px !important;
+        height: 30px !important;
+        min-height: 30px !important;
+        width: 38px !important;
         border: none !important;
         background-color: transparent !important;
+        font-size: 1.2rem !important;
+    }
+
+    /* 6. Taille des titres d'onglets (Tabs) */
+    button[data-baseweb="tab"] div {
+        font-size: 1.1rem !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -122,13 +139,11 @@ if menu == "📝 Inscriptions":
             
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             date_f = format_date_fr_complete(at['date_atelier'], gras=True)
-            # Pas d'émojis ici, juste les infos demandées
             titre_label = f"{date_f} — {at['titre']}\n📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
             
             with st.expander(titre_label):
                 if res_ins.data:
                     for i in res_ins.data:
-                        # RAPPEL : Colonnes asymétriques pour forcer le bouton à rester à droite sur mobile
                         c_nom, c_poub = st.columns([0.88, 0.12])
                         n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
                         c_nom.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
@@ -256,5 +271,5 @@ elif menu == "🔐 Administration":
                     if o == current_code:
                         supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
                         st.success("Code modifié !"); st.rerun()
-                    else: st.error("Code incorrect.")
+                    else: st.error("Ancien code incorrect.")
     else: st.info("Saisissez le code secret.")
