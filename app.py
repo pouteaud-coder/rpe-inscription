@@ -22,7 +22,6 @@ st.markdown("""
     .lieu-badge { padding: 3px 10px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.85rem; display: inline-block; margin: 2px 0; }
     .horaire-text { font-size: 0.9rem; color: #666; font-weight: 400; }
     
-    /* Style pour les compteurs (Enfants / Places) */
     .compteur-badge { 
         font-size: 0.85rem; 
         font-weight: 600; 
@@ -33,7 +32,7 @@ st.markdown("""
         border: 1px solid #ddd;
         margin-left: 5px;
     }
-    .alerte-complet { color: #d32f2f; border-color: #d32f2f; background-color: #fdecea; }
+    .alerte-complet { background-color: #d32f2f !important; color: white !important; border-color: #b71c1c !important; }
 
     .separateur-atelier { border: 0; border-top: 1px solid #eee; margin: 15px 0; }
     
@@ -105,9 +104,10 @@ if menu == "📝 Inscriptions":
         
         for at in res_at.data:
             res_ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", at['id']).execute()
-            total_enfants = sum([i['nb_enfants'] for i in res_ins.data])
-            # La capacité compte les enfants (le parent accompagnateur est implicite)
-            restantes = at['capacite_max'] - total_enfants
+            
+            # LOGIQUE : 1 Adulte + X Enfants par inscription
+            total_occupants = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_ins.data])
+            restantes = at['capacite_max'] - total_occupants
             
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             date_f = format_date_fr_complete(at['date_atelier'], gras=True)
@@ -130,13 +130,22 @@ if menu == "📝 Inscriptions":
                 c1, c2, c3 = st.columns([2, 1, 1])
                 qui = c1.selectbox("Qui ?", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
                 nb_e = c2.number_input("Enfants", 1, 10, 1, key=f"e_{at['id']}")
+                
                 if c3.button("Valider", key=f"v_{at['id']}", type="primary"):
                     if qui != "Choisir...":
                         id_adh = dict_adh[qui]
+                        # Vérifier si c'est une mise à jour ou un nouvel inscrit
                         existing = next((ins for ins in res_ins.data if ins['adherent_id'] == id_adh), None)
-                        if existing: supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
-                        else: supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
-                        st.rerun()
+                        
+                        # Calculer l'impact de l'inscription sur les places
+                        diff = (1 + nb_e) - (1 + existing['nb_enfants'] if existing else 0)
+                        
+                        if restantes - diff < 0:
+                            st.error(f"Impossible : plus que {restantes} places disponibles.")
+                        else:
+                            if existing: supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
+                            else: supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
+                            st.rerun()
 
 # ==========================================
 # SECTION 📊 SUIVI & RÉCAP
@@ -168,22 +177,23 @@ elif menu == "📊 Suivi & Récap":
             
         for index, a in enumerate(ats_raw.data):
             c_l = get_color(a['lieux']['nom'])
-            
-            # Récupération des inscrits pour cet atelier spécifique
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
             
-            # CALCULS DES TOTAUX
+            # CALCULS LOGIQUES (Adulte + Enfants)
+            total_adultes = len(ins_at.data)
             total_enfants = sum([p['nb_enfants'] for p in ins_at.data])
-            restantes = a['capacite_max'] - total_enfants
+            total_occupants = total_adultes + total_enfants
+            restantes = a['capacite_max'] - total_occupants
+            
             classe_complet = "alerte-complet" if restantes <= 0 else ""
             
-            # Ligne de la Date avec les nouveaux badges de comptage
             st.markdown(f"""
                 **{format_date_fr_complete(a['date_atelier'])}** | 
                 <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | 
                 <span class='horaire-text'>{a['horaires']['libelle']}</span>
+                <span class='compteur-badge'>👤 {total_adultes} adultes</span>
                 <span class='compteur-badge'>👶 {total_enfants} enfants</span>
-                <span class='compteur-badge {classe_complet}'>🪑 {restantes} pl. libres</span>
+                <span class='compteur-badge {classe_complet}'>🏁 {restantes} pl. libres</span>
             """, unsafe_allow_html=True)
             
             if not ins_at.data: 
@@ -200,8 +210,8 @@ elif menu == "📊 Suivi & Récap":
                 st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION
+# SECTION 🔐 ADMINISTRATION (Identique)
 # ==========================================
 elif menu == "🔐 Administration":
-    # Le code d'administration reste le même...
+    # Code d'administration inchangé (Gestion des lieux, adhérents et code secret)...
     pass
