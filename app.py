@@ -26,13 +26,26 @@ def format_date_fr(date_obj):
         except: return date_obj
     return f"{jours[date_obj.weekday()]} {date_obj.day} {mois[date_obj.month-1]} {date_obj.year}"
 
-def parse_date_flexible(date_str):
-    date_str = str(date_str).strip()
-    match = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", date_str)
-    if match:
-        day, month, year = match.groups()
+def parse_date_fr_to_iso(date_str):
+    """Convertit 'Jeudi 2 avril 2026' ou '02/04/2026' en '2026-04-02'"""
+    date_str = str(date_str).lower()
+    mois_map = {"janvier":"01", "février":"02", "mars":"03", "avril":"04", "mai":"05", "juin":"06", 
+                "juillet":"07", "août":"08", "septembre":"09", "octobre":"10", "novembre":"11", "décembre":"12"}
+    
+    # Tentative format textuel : "jeudi 2 avril 2026"
+    match_txt = re.search(r"(\d{1,2})\s+([a-zéû]+)\s+(\d{4})", date_str)
+    if match_txt:
+        day, month_str, year = match_txt.groups()
+        month = mois_map.get(month_str, "01")
+        return f"{year}-{month}-{day.zfill(2)}"
+    
+    # Tentative format numérique : "02/04/2026"
+    match_num = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", date_str)
+    if match_num:
+        day, month, year = match_num.groups()
         return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-    return str(datetime.now().date())
+    
+    return str(date.today())
 
 # --- INITIALISATION SESSION ---
 if 'at_list' not in st.session_state:
@@ -84,33 +97,35 @@ elif menu == "🔐 Administration":
 
             conf = {
                 "Date": st.column_config.TextColumn("Date", width=220),
-                "Titre": st.column_config.TextColumn("Titre", width=320),
+                "Titre": st.column_config.TextColumn("Titre", width=320, placeholder="Saisir un titre..."),
                 "Lieu": st.column_config.SelectboxColumn("Lieu", options=l_list, width=130),
                 "Horaire": st.column_config.SelectboxColumn("Horaire", options=h_list, width=130),
                 "Capacité": st.column_config.NumberColumn("Cap.", width=60),
                 "Actif": st.column_config.CheckboxColumn("Actif", width=60),
                 "Select": st.column_config.CheckboxColumn("Sél.", width=50),
-                "_raw_date": None, "ID": None
+                "ID": None
             }
 
             if sub == "Générateur":
                 with st.expander("🛠️ Paramétrer une série"):
-                    d1 = st.date_input("Début", datetime.now(), format="DD/MM/YYYY")
+                    d1 = st.date_input("Début", date.today(), format="DD/MM/YYYY")
                     d2 = st.date_input("Fin", d1 + timedelta(days=7), format="DD/MM/YYYY")
                     js_sel = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
                     if st.button("📊 Générer"):
                         tmp = []
                         curr = d1
+                        js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                         while curr <= d2:
-                            js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                             if js_fr[curr.weekday()] in js_sel:
-                                tmp.append({"Select": False, "Date": format_date_fr(curr), "Titre": "Atelier Éveil", "Lieu": l_list[0], "Horaire": h_list[0], "Capacité": map_capa[l_list[0]], "Actif": True, "_raw_date": str(curr)})
+                                tmp.append({"Select": False, "Date": format_date_fr(curr), "Titre": "", "Lieu": l_list[0], "Horaire": h_list[0], "Capacité": map_capa[l_list[0]], "Actif": True})
                             curr += timedelta(days=1)
                         st.session_state['at_list'] = tmp
                         st.rerun()
 
                 if st.session_state['at_list']:
                     res_gen = st.data_editor(pd.DataFrame(st.session_state['at_list']), hide_index=True, num_rows="dynamic", column_config=conf, key="ed_gen")
+                    
+                    # Mise à jour auto capacité
                     for i, row in res_gen.iterrows():
                         if i < len(st.session_state['at_list']):
                             if row['Lieu'] != st.session_state['at_list'][i]['Lieu']:
@@ -120,13 +135,24 @@ elif menu == "🔐 Administration":
 
                     c_save, c_plus, c_del_gen = st.columns([1, 1.5, 2])
                     if c_save.button("✅ Enregistrer"):
-                        to_db = [{"date_atelier": parse_date_flexible(r['Date']), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": r['Capacité'], "est_actif": r['Actif']} for _, r in res_gen.iterrows() if r['Titre'] and not r['Select']]
+                        # CORRECTION : Extraction de la date depuis la colonne 'Date' du tableau
+                        to_db = []
+                        for _, r in res_gen.iterrows():
+                            if r['Titre'] and not r['Select']:
+                                to_db.append({
+                                    "date_atelier": parse_date_fr_to_iso(r['Date']), 
+                                    "titre": r['Titre'], 
+                                    "lieu_id": map_l_id[r['Lieu']], 
+                                    "horaire_id": map_h_id[r['Horaire']], 
+                                    "capacite_max": r['Capacité'], 
+                                    "est_actif": r['Actif']
+                                })
                         if to_db:
                             supabase.table("ateliers").insert(to_db).execute()
-                            st.session_state['at_list'] = []; st.rerun()
+                            st.session_state['at_list'] = []; st.success("Ateliers d'avril enregistrés !"); st.rerun()
 
-                    if c_plus.button("➕ Ajouter une ligne"):
-                        st.session_state['at_list'].append({"Select": False, "Date": datetime.now().strftime("%d/%m/%Y"), "Titre": "", "Lieu": l_list[0], "Horaire": h_list[0], "Capacité": map_capa[l_list[0]], "Actif": True, "_raw_date": str(datetime.now().date())})
+                    if c_plus.button("➕ Ligne vide"):
+                        st.session_state['at_list'].append({"Select": False, "Date": format_date_fr(date.today()), "Titre": "", "Lieu": l_list[0], "Horaire": h_list[0], "Capacité": map_capa[l_list[0]], "Actif": True})
                         st.rerun()
 
                     selected_to_pop = res_gen[res_gen['Select'] == True].index.tolist()
@@ -136,46 +162,30 @@ elif menu == "🔐 Administration":
                             st.session_state['at_list'] = new_list; st.rerun()
 
             else:
-                # RÉPERTOIRE AVEC FILTRES M-2 / M+2
+                # RÉPERTOIRE (Logique M-2 / M+2 conservée)
                 today = date.today()
-                
-                # Calcul M-2 (1er jour)
                 m_minus_2 = today.month - 2
                 y_start = today.year
-                if m_minus_2 <= 0:
-                    m_minus_2 += 12
-                    y_start -= 1
+                if m_minus_2 <= 0: m_minus_2 += 12; y_start -= 1
                 default_start = date(y_start, m_minus_2, 1)
                 
-                # Calcul M+2 (Dernier jour)
                 m_plus_2 = today.month + 2
                 y_end = today.year
-                if m_plus_2 > 12:
-                    m_plus_2 -= 12
-                    y_end += 1
-                
-                # Pour trouver le dernier jour de M+2, on va au 1er du mois suivant et on retire 1 jour
+                if m_plus_2 > 12: m_plus_2 -= 12; y_end += 1
                 m_next = m_plus_2 + 1
                 y_next = y_end
-                if m_next > 12:
-                    m_next = 1
-                    y_next += 1
+                if m_next > 12: m_next = 1; y_next += 1
                 default_end = date(y_next, m_next, 1) - timedelta(days=1)
 
-                st.subheader("🔍 Filtres de recherche")
+                st.subheader("🔍 Filtres")
                 c_f1, c_f2, c_f3 = st.columns([2, 1.5, 1.5])
-                
-                with c_f1:
-                    f_r = st.radio("Statut :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
-                with c_f2:
-                    date_debut = st.date_input("Du :", default_start, format="DD/MM/YYYY")
-                with c_f3:
-                    date_fin = st.date_input("Au :", default_end, format="DD/MM/YYYY")
+                with c_f1: f_r = st.radio("Statut :", ["Tous", "Actifs", "Inactifs"], horizontal=True)
+                with c_f2: date_debut = st.date_input("Du :", default_start, format="DD/MM/YYYY")
+                with c_f3: date_fin = st.date_input("Au :", default_end, format="DD/MM/YYYY")
 
                 query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)")
                 if f_r == "Actifs": query = query.eq("est_actif", True)
                 elif f_r == "Inactifs": query = query.eq("est_actif", False)
-                
                 query = query.gte("date_atelier", str(date_debut)).lte("date_atelier", str(date_fin))
                 db_d = query.order("date_atelier", desc=False).execute().data
                 
@@ -189,38 +199,25 @@ elif menu == "🔐 Administration":
                         for _, row in rows_to_update.iterrows():
                             try:
                                 supabase.table("ateliers").update({
-                                    "titre": row['Titre'], "lieu_id": map_l_id[row['Lieu']], 
-                                    "horaire_id": map_h_id[row['Horaire']], "capacite_max": row['Capacité'], "est_actif": row['Actif']
+                                    "titre": row['Titre'], "lieu_id": map_l_id[row['Lieu']], "horaire_id": map_h_id[row['Horaire']], 
+                                    "capacite_max": row['Capacité'], "est_actif": row['Actif']
                                 }).eq("id", int(row['ID'])).execute()
                             except: pass
                         st.success("Modifications enregistrées !"); st.rerun()
                     
                     selected_rows = res_r[res_r['Select'] == True]
                     if not selected_rows.empty:
-                        selected_ids = selected_rows['ID'].tolist()
-                        if c2.button(f"🗑️ Supprimer ({len(selected_ids)})", type="primary"):
+                        if c2.button(f"🗑️ Supprimer ({len(selected_rows)})", type="primary"):
                             @st.dialog("Confirmation")
                             def multi_del(rows):
                                 ids = rows['ID'].tolist()
-                                total_inscr = 0
-                                for i in ids:
-                                    total_inscr += supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", i).execute().count
-                                if total_inscr > 0:
-                                    st.warning(f"⚠️ {total_inscr} inscription(s) détectée(s).")
-                                    code = st.text_input("Code Administrateur", type="password")
-                                    if st.button("Confirmer Suppression Forcée"):
-                                        if code == current_code:
-                                            supabase.table("inscriptions").delete().in_("atelier_id", ids).execute()
-                                            supabase.table("ateliers").delete().in_("id", ids).execute()
-                                            st.rerun()
-                                        else: st.error("Code invalide.")
-                                else:
-                                    st.write(f"Supprimer ces {len(ids)} ateliers ?")
-                                    if st.button("Confirmer"):
-                                        supabase.table("ateliers").delete().in_("id", ids).execute(); st.rerun()
+                                st.write(f"Supprimer ces {len(ids)} ateliers ?")
+                                if st.button("Confirmer"):
+                                    supabase.table("inscriptions").delete().in_("atelier_id", ids).execute()
+                                    supabase.table("ateliers").delete().in_("id", ids).execute()
+                                    st.rerun()
                             multi_del(selected_rows)
-                else:
-                    st.info("Aucun atelier trouvé pour cette période.")
+                else: st.info("Aucun atelier trouvé.")
 
         # --- ONGLETS ADHÉRENTS / LIEUX / SÉCURITÉ ---
         with t2:
