@@ -35,11 +35,18 @@ def parse_date_fr_to_iso(date_str):
     if match_txt:
         d, m, y = match_txt.groups()
         return f"{y}-{mois_map.get(m, '01')}-{d.zfill(2)}"
-    match_num = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", date_str)
-    if match_num:
-        d, m, y = match_num.groups()
-        return f"{y}-{m.zfill(2)}-{d.zfill(2)}"
     return str(date.today())
+
+# --- GESTION DE LA PERSISTANCE DE L'ACCORDÉON ---
+if 'u_opened_at' not in st.session_state:
+    st.session_state['u_opened_at'] = None
+
+@st.dialog("Confirmer la suppression")
+def confirm_delete_inscrit(inscrit_id, nom):
+    st.write(f"Voulez-vous vraiment désinscrire **{nom}** de cet atelier ?")
+    if st.button("Oui, supprimer", type="primary"):
+        supabase.table("inscriptions").delete().eq("id", inscrit_id).execute()
+        st.rerun()
 
 # --- INITIALISATION SESSION ---
 if 'at_list' not in st.session_state:
@@ -70,11 +77,8 @@ if menu == "📝 Inscriptions":
             st.info("Aucun atelier prévu prochainement.")
         else:
             for at in res_at.data:
-                # Récupération des inscriptions actuelles
                 res_ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", at['id']).execute()
                 inscrits = res_ins.data
-                
-                # Calcul de l'occupation (1 adulte + nb_enfants)
                 total_occupé = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in inscrits])
                 restantes = at['capacite_max'] - total_occupé
                 
@@ -82,7 +86,12 @@ if menu == "📝 Inscriptions":
                 lieu_h = f"{at['lieux']['nom']} | {at['horaires']['libelle']}"
                 statut = f"({restantes} places restantes)" if restantes > 0 else "(COMPLET)"
                 
-                with st.expander(f"📅 {date_txt} - {at['titre']} | {lieu_h} {statut}"):
+                # Gestion de l'ouverture auto
+                is_open = st.session_state['u_opened_at'] == at['id']
+                
+                with st.expander(f"📅 {date_txt} - {at['titre']} | {lieu_h} {statut}", expanded=is_open):
+                    # Si l'utilisateur clique sur un expander, on enregistre son ID
+                    st.session_state['u_opened_at'] = at['id']
                     
                     st.markdown("##### 👥 Liste des inscrits")
                     if not inscrits:
@@ -94,8 +103,7 @@ if menu == "📝 Inscriptions":
                             col_n.write(f"• **{nom_i}**")
                             col_e.write(f"{i['nb_enfants']} enfant(s)")
                             if col_act.button("🗑️", key=f"del_{at['id']}_{i['id']}"):
-                                supabase.table("inscriptions").delete().eq("id", i['id']).execute()
-                                st.rerun()
+                                confirm_delete_inscrit(i['id'], nom_i)
                     
                     st.markdown("---")
                     st.markdown("##### ➕ Inscrire ou Modifier")
@@ -105,10 +113,7 @@ if menu == "📝 Inscriptions":
                         beneficiaire = st.selectbox("Qui ?", liste_noms, key=f"ben_{at['id']}")
                     with ci2:
                         mode_e = st.radio("Enfants :", ["1", "2", "3", "4", "Plus..."], horizontal=True, key=f"me_{at['id']}")
-                        if mode_e == "Plus...":
-                            nb_e = st.number_input("Nombre :", 5, 20, 5, key=f"ne_{at['id']}")
-                        else:
-                            nb_e = int(mode_e)
+                        nb_e = st.number_input("Nombre :", 5, 20, 5, key=f"ne_{at['id']}") if mode_e == "Plus..." else int(mode_e)
                     
                     with ci3:
                         st.write("")
@@ -118,23 +123,21 @@ if menu == "📝 Inscriptions":
                             else:
                                 id_ben = dict_adh[beneficiaire]
                                 existing = next((ins for ins in inscrits if ins['adherent_id'] == id_ben), None)
-                                
-                                # Calcul de la différence de jauge
                                 diff = (1 + nb_e) if not existing else (nb_e - existing['nb_enfants'])
                                 
                                 if diff > restantes:
-                                    st.error(f"Places insuffisantes (manque {diff - restantes} places).")
+                                    st.error(f"Places insuffisantes.")
                                 else:
                                     if existing:
                                         supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
-                                        st.toast(f"Mise à jour pour {beneficiaire} !")
+                                        st.toast(f"Mise à jour effectuée !")
                                     else:
                                         supabase.table("inscriptions").insert({"adherent_id": id_ben, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
-                                        st.toast(f"{beneficiaire} inscrit(e) !")
+                                        st.toast(f"Inscription réussie !")
                                     st.rerun()
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION
+# SECTION 🔐 ADMINISTRATION (Inchangée)
 # ==========================================
 elif menu == "🔐 Administration":
     password_input = st.text_input("Code secret d'accès", type="password")
