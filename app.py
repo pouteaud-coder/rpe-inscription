@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import re
 import hashlib
+import io
 
 # 1. Configuration de la page
 st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
@@ -14,7 +15,7 @@ def get_color(nom_lieu):
     hex_hash = hash_object.hexdigest()
     return f"#{hex_hash[:6]}"
 
-# --- STYLE CSS ---
+# --- STYLE CSS AMÉLIORÉ ---
 st.markdown("""
     <style>
     html, body, [class*="st-"] { font-size: 1.05rem !important; }
@@ -22,6 +23,7 @@ st.markdown("""
     .lieu-badge { padding: 3px 10px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.85rem; display: inline-block; margin: 2px 0; }
     .horaire-text { font-size: 0.9rem; color: #666; font-weight: 400; }
     
+    /* Badges de compteurs avec alertes de seuil */
     .compteur-badge { 
         font-size: 0.85rem; 
         font-weight: 600; 
@@ -32,7 +34,8 @@ st.markdown("""
         border: 1px solid #ddd;
         margin-left: 5px;
     }
-    .alerte-complet { background-color: #d32f2f !important; color: white !important; border-color: #b71c1c !important; }
+    .alerte-orange { background-color: #fff3e0 !important; color: #ef6c00 !important; border-color: #ffe0b2 !important; }
+    .alerte-rouge { background-color: #d32f2f !important; color: white !important; border-color: #b71c1c !important; }
 
     .separateur-atelier { border: 0; border-top: 1px solid #eee; margin: 15px 0; }
     
@@ -45,8 +48,7 @@ st.markdown("""
         line-height: 1.1;
     }
     .nb-enfants-focus { color: #2e7d32; font-weight: 600; }
-
-    .stButton button { border-radius: 8px !important; min-width: 200px !important; }
+    .stButton button { border-radius: 8px !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -80,12 +82,14 @@ def parse_date_fr_to_iso(date_str):
         return f"{y}-{mois_map.get(m, '01')}-{d.zfill(2)}"
     return str(date.today())
 
-# --- INITIALISATION ET TRI ALPHABÉTIQUE ---
-if 'at_list' not in st.session_state: st.session_state['at_list'] = []
+# --- INITIALISATION DES DONNÉES ---
 current_code = get_secret_code()
 res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").order("prenom").execute()
 dict_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
 liste_adh = list(dict_adh.keys())
+
+res_lieux = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute()
+liste_lieux = [l['nom'] for l in res_lieux.data]
 
 # --- NAVIGATION ---
 st.title("🌿 Système RPE Connect")
@@ -104,14 +108,12 @@ if menu == "📝 Inscriptions":
         
         for at in res_at.data:
             res_ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", at['id']).execute()
-            
-            # LOGIQUE : 1 Adulte + X Enfants par inscription
-            total_occupants = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_ins.data])
-            restantes = at['capacite_max'] - total_occupants
+            total_occ = sum([(1 + i['nb_enfants']) for i in res_ins.data])
+            restantes = at['capacite_max'] - total_occ
             
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             date_f = format_date_fr_complete(at['date_atelier'], gras=True)
-            titre_label = f"{date_f} — {at['titre']}\n📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
+            titre_label = f"{date_f} — {at['titre']} | {at['lieux']['nom']} | {statut_p}"
             
             with st.expander(titre_label):
                 if res_ins.data:
@@ -134,14 +136,11 @@ if menu == "📝 Inscriptions":
                 if c3.button("Valider", key=f"v_{at['id']}", type="primary"):
                     if qui != "Choisir...":
                         id_adh = dict_adh[qui]
-                        # Vérifier si c'est une mise à jour ou un nouvel inscrit
                         existing = next((ins for ins in res_ins.data if ins['adherent_id'] == id_adh), None)
-                        
-                        # Calculer l'impact de l'inscription sur les places
                         diff = (1 + nb_e) - (1 + existing['nb_enfants'] if existing else 0)
                         
                         if restantes - diff < 0:
-                            st.error(f"Impossible : plus que {restantes} places disponibles.")
+                            st.error(f"Plus que {restantes} places.")
                         else:
                             if existing: supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
                             else: supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
@@ -151,7 +150,7 @@ if menu == "📝 Inscriptions":
 # SECTION 📊 SUIVI & RÉCAP
 # ==========================================
 elif menu == "📊 Suivi & Récap":
-    st.header("🔎 Consultation")
+    st.header("🔎 Consultation & Bilans")
     t1, t2 = st.tabs(["👤 Par Adhérente", "📅 Par Atelier"])
     
     with t1:
@@ -166,34 +165,43 @@ elif menu == "📊 Suivi & Récap":
                 curr_u = nom_u
             at = i['ateliers']
             c_l = get_color(at['lieux']['nom'])
-            st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+            st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
 
     with t2:
-        c_d1, c_d2 = st.columns(2)
-        d_start = c_d1.date_input("Du", date.today(), format="DD/MM/YYYY")
-        d_end = c_d2.date_input("Au", d_start + timedelta(days=30), format="DD/MM/YYYY")
+        # FILTRES AVANCÉS
+        c_f1, c_f2, c_f3 = st.columns([1, 1, 1])
+        d_start = c_f1.date_input("Du", date.today(), format="DD/MM/YYYY")
+        d_end = c_f2.date_input("Au", d_start + timedelta(days=30), format="DD/MM/YYYY")
+        f_lieu = c_f3.multiselect("Lieu(x)", liste_lieux)
         
-        ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_start)).lte("date_atelier", str(d_end)).order("date_atelier").execute()
+        # Requête avec filtre Lieu optionnel
+        query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_start)).lte("date_atelier", str(d_end))
+        if f_lieu:
+            # On récupère les IDs des lieux filtrés
+            ids_l = [l['id'] for l in res_lieux.data if l['nom'] in f_lieu]
+            query = query.in_("lieu_id", ids_l)
+        
+        ats_raw = query.order("date_atelier").execute()
+        
+        # Préparation de l'export Excel
+        export_data = []
             
         for index, a in enumerate(ats_raw.data):
             c_l = get_color(a['lieux']['nom'])
             ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
             
-            # CALCULS LOGIQUES (Adulte + Enfants)
-            total_adultes = len(ins_at.data)
-            total_enfants = sum([p['nb_enfants'] for p in ins_at.data])
-            total_occupants = total_adultes + total_enfants
-            restantes = a['capacite_max'] - total_occupants
+            t_ad = len(ins_at.data); t_en = sum([p['nb_enfants'] for p in ins_at.data])
+            t_occ = t_ad + t_en; rest = a['capacite_max'] - t_occ
             
-            classe_complet = "alerte-complet" if restantes <= 0 else ""
+            # Gestion visuelle des alertes
+            classe_alerte = ""
+            if rest <= 0: classe_alerte = "alerte-rouge"
+            elif rest <= 3: classe_alerte = "alerte-orange"
             
             st.markdown(f"""
-                **{format_date_fr_complete(a['date_atelier'])}** | 
-                <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | 
-                <span class='horaire-text'>{a['horaires']['libelle']}</span>
-                <span class='compteur-badge'>👤 {total_adultes} adultes</span>
-                <span class='compteur-badge'>👶 {total_enfants} enfants</span>
-                <span class='compteur-badge {classe_complet}'>🏁 {restantes} pl. libres</span>
+                **{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span>
+                <span class='compteur-badge'>👤 {t_ad}</span> <span class='compteur-badge'>👶 {t_en}</span>
+                <span class='compteur-badge {classe_alerte}'>🏁 {rest} pl. libres</span>
             """, unsafe_allow_html=True)
             
             if not ins_at.data: 
@@ -202,16 +210,26 @@ elif menu == "📊 Suivi & Récap":
                 ins_sorted = sorted(ins_at.data, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
                 html_inscrits = "<div class='container-inscrits'>"
                 for p in ins_sorted:
-                    html_inscrits += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
+                    n_full = f"{p['adherents']['prenom']} {p['adherents']['nom']}"
+                    html_inscrits += f'<span class="liste-inscrits">• {n_full} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
+                    export_data.append({"Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'], "Adhérent": n_full, "Enfants": p['nb_enfants']})
                 html_inscrits += "</div>"
                 st.markdown(html_inscrits, unsafe_allow_html=True)
             
-            if index < len(ats_raw.data) - 1:
-                st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
+            if index < len(ats_raw.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
+
+        # BOUTON EXPORT
+        if export_data:
+            st.write("---")
+            df_export = pd.DataFrame(export_data)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_export.to_excel(writer, index=False, sheet_name='Inscriptions')
+            st.download_button(label="📥 Télécharger le récapitulatif (Excel)", data=output.getvalue(), file_name=f"RPE_Recap_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ==========================================
 # SECTION 🔐 ADMINISTRATION (Identique)
 # ==========================================
 elif menu == "🔐 Administration":
-    # Code d'administration inchangé (Gestion des lieux, adhérents et code secret)...
+    # Le code de l'administration reste tel quel pour la gestion des données sources.
     pass
