@@ -54,7 +54,7 @@ def format_date_fr_complete(date_obj, gras=True):
     return f"**{res}**" if gras else res
 
 def parse_date_fr_to_iso(date_str):
-    clean = date_str.replace("**", "").strip()
+    clean = str(date_str).replace("**", "").strip()
     parts = clean.split(" ")
     if len(parts) < 4: return date_str
     d, m_str, y = parts[1], parts[2].lower(), parts[3]
@@ -74,11 +74,10 @@ def export_to_pdf(title, data_list):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, title, ln=True, align='C')
+    pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
     pdf.ln(10)
     pdf.set_font("Arial", size=11)
     for line in data_list:
-        # Encodage latin-1 pour FPDF standard (évite les erreurs sur les caractères spéciaux)
         pdf.multi_cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'))
     return pdf.output(dest='S').encode('latin-1')
 
@@ -93,16 +92,28 @@ def secure_delete_dialog(table, item_id, label, current_code):
             st.success("Opération réussie"); st.rerun()
         else: st.error("Code incorrect")
 
+@st.dialog("⚠️ Suppression Atelier")
+def delete_atelier_dialog(at_id, titre, a_des_inscrits, current_code):
+    st.warning(f"Voulez-vous supprimer l'atelier : **{titre}** ?")
+    if a_des_inscrits:
+        st.error("Attention : cet atelier contient des inscriptions qui seront également supprimées.")
+    pw = st.text_input("Code secret admin pour suppression", type="password", key="pw_del_at")
+    if st.button("Confirmer la suppression définitive", type="primary"):
+        if pw == current_code:
+            if a_des_inscrits:
+                supabase.table("inscriptions").delete().eq("atelier_id", at_id).execute()
+            supabase.table("ateliers").delete().eq("id", at_id).execute()
+            st.success("Atelier supprimé"); st.rerun()
+        else: st.error("Code incorrect")
+
 @st.dialog("⚠️ Confirmer la désinscription")
 def confirm_unsubscribe_dialog(ins_id, nom_complet):
     st.warning(f"Souhaitez-vous vraiment annuler la réservation de **{nom_complet}** ?")
-    c1, c2 = st.columns(2)
-    if c1.button("Oui, désinscrire", type="primary"):
+    if st.button("Oui, désinscrire", type="primary"):
         supabase.table("inscriptions").delete().eq("id", ins_id).execute(); st.rerun()
-    if c2.button("Non, conserver"): st.rerun()
 
 # --- CHARGEMENT DES DONNÉES GLOBALES ---
-if 'at_list' not in st.session_state: st.session_state['at_list'] = []
+if 'at_list_gen' not in st.session_state: st.session_state['at_list_gen'] = []
 current_code = get_secret_code()
 res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").order("prenom").execute()
 dict_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
@@ -128,7 +139,7 @@ if menu == "📝 Inscriptions":
             restantes = at['capacite_max'] - total_occ
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             date_f = format_date_fr_complete(at['date_atelier'], gras=True)
-            titre_label = f"{date_f} — {at['titre']}\n📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
+            titre_label = f"{date_f} — {at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
             
             with st.expander(titre_label):
                 if res_ins.data:
@@ -152,10 +163,14 @@ if menu == "📝 Inscriptions":
                         if existing:
                             diff = nb_e - existing['nb_enfants']
                             if restantes - diff < 0: st.error(f"Manque de places ({restantes} restantes)")
-                            else: supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute(); st.rerun()
+                            else: 
+                                supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
+                                st.rerun()
                         else:
                             if restantes - (1 + nb_e) < 0: st.error(f"Manque de places ({restantes} restantes)")
-                            else: supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute(); st.rerun()
+                            else: 
+                                supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
+                                st.rerun()
 
 # ==========================================
 # SECTION 📊 SUIVI & RÉCAP
@@ -170,7 +185,6 @@ elif menu == "📊 Suivi & Récap":
         data = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids).eq("ateliers.est_actif", True).order("adherent_id").execute()
         
         if data.data:
-            # Préparation des données pour l'export
             df_export = pd.DataFrame([{
                 "Assistante Maternelle": f"{i['adherents']['prenom']} {i['adherents']['nom']}",
                 "Date": i['ateliers']['date_atelier'],
@@ -181,7 +195,6 @@ elif menu == "📊 Suivi & Récap":
 
             c_btn1, c_btn2 = st.columns(2)
             c_btn1.download_button("📥 Excel - Assistantes", data=export_to_excel(df_export), file_name="suivi_am.xlsx")
-            
             pdf_data = [f"{row['Assistante Maternelle']} - {row['Date']} - {row['Atelier']} ({row['Nb Enfants']} enf.)" for _, row in df_export.iterrows()]
             c_btn2.download_button("📥 PDF - Assistantes", data=export_to_pdf("Recapitulatif par Assistante Maternelle", pdf_data), file_name="suivi_am.pdf")
 
@@ -203,7 +216,6 @@ elif menu == "📊 Suivi & Récap":
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_start)).lte("date_atelier", str(d_end)).order("date_atelier").execute()
         
         if ats_raw.data:
-            # Préparation des données pour l'export planning
             planning_data = []
             for a in ats_raw.data:
                 ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
@@ -220,7 +232,6 @@ elif menu == "📊 Suivi & Récap":
                 df_plan = pd.DataFrame(planning_data)
                 c_btn3, c_btn4 = st.columns(2)
                 c_btn3.download_button("📥 Excel - Planning", data=export_to_excel(df_plan), file_name="planning_RPE.xlsx")
-                
                 pdf_plan = [f"{r['Date']} | {r['Atelier']} | {r['AM']} ({r['Enfants']} enf.)" for r in planning_data]
                 c_btn4.download_button("📥 PDF - Planning", data=export_to_pdf("Planning des Ateliers", pdf_plan), file_name="planning_RPE.pdf")
 
@@ -281,8 +292,7 @@ elif menu == "🔐 Administration":
                         curr += timedelta(days=1)
                     st.session_state['at_list_gen'] = tmp
 
-                if 'at_list_gen' in st.session_state and st.session_state['at_list_gen']:
-                    # Utilisation d'un DataFrame pour l'éditeur
+                if st.session_state['at_list_gen']:
                     df_ed = st.data_editor(
                         pd.DataFrame(st.session_state['at_list_gen']), 
                         num_rows="dynamic", 
@@ -298,7 +308,6 @@ elif menu == "🔐 Administration":
                     if st.button("💾 Enregistrer les ateliers"):
                         to_db = []
                         for _, r in df_ed.iterrows():
-                            # Ajustement dynamique de la capacité si non modifiée manuellement
                             cap_finale = r['Capacité']
                             if r['Lieu'] in map_l_cap and r['Capacité'] == 10: 
                                 cap_finale = map_l_cap[r['Lieu']]
@@ -332,7 +341,9 @@ elif menu == "🔐 Administration":
                     c_a, c_b = st.columns([0.85, 0.15])
                     c_a.write(f"{'🟢' if a['est_actif'] else '🔴'} **{format_date_fr_complete(a['date_atelier'])}** | {a['horaires']['libelle']} | {a['titre']} ({a['lieux']['nom']})")
                     if c_b.button("🗑️", key=f"at_del_{a['id']}"):
-                        cnt = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", a['id']).execute().count
+                        # Correction de l'erreur NameError : définition de cnt et appel de la fonction correcte
+                        cnt_res = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", a['id']).execute()
+                        cnt = cnt_res.count if cnt_res.count is not None else 0
                         delete_atelier_dialog(a['id'], a['titre'], cnt > 0, current_code)
 
             elif sub == "Actions groupées":
