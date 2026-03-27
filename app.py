@@ -244,7 +244,7 @@ elif menu == "📊 Suivi & Récap":
                 if index < len(ats_raw.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION (AVEC NOUVEAUTÉS)
+# SECTION 🔐 ADMINISTRATION
 # ==========================================
 elif menu == "🔐 Administration":
     pw = st.text_input("Code secret admin", type="password")
@@ -308,6 +308,19 @@ elif menu == "🔐 Administration":
                         cnt = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", a['id']).execute().count
                         delete_atelier_dialog(a['id'], a['titre'], (cnt if cnt else 0) > 0, current_code)
 
+            elif sub == "Actions groupées":
+                # RESTAURATION DES ACTIONS GROUPÉES
+                with st.form("bulk_form"):
+                    st.write("Désactiver ou réactiver des ateliers par plage de dates :")
+                    c1, c2 = st.columns(2)
+                    bs = c1.date_input("Début", format="DD/MM/YYYY")
+                    be = c2.date_input("Fin", format="DD/MM/YYYY")
+                    action = st.radio("Action à appliquer :", ["Activer", "Désactiver"], horizontal=True)
+                    if st.form_submit_button("🚀 Appliquer aux ateliers"):
+                        supabase.table("ateliers").update({"est_actif": (action=="Activer")}).gte("date_atelier", str(bs)).lte("date_atelier", str(be)).execute()
+                        st.success(f"Action terminée pour la période du {bs} au {be}")
+                        st.rerun()
+
         with t2: # ASSISTANTES MATERNELLES
             with st.form("add_am"):
                 c1, c2 = st.columns(2)
@@ -327,7 +340,7 @@ elif menu == "🔐 Administration":
             data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).order("adherent_id").execute()
             if data_adm.data:
                 df_adm = pd.DataFrame([{"AM": f"{i['adherents']['prenom']} {i['adherents']['nom']}", "Date": i['ateliers']['date_atelier'], "Titre": i['ateliers']['titre'], "Enfants": i['nb_enfants']} for i in data_adm.data])
-                st.download_button("📥 Excel", data=export_to_excel(df_adm), file_name="admin_suivi.xlsx")
+                st.download_button("📥 Export Excel", data=export_to_excel(df_adm), file_name="admin_suivi.xlsx")
                 curr = ""
                 for i in data_adm.data:
                     nom = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
@@ -368,5 +381,5 @@ elif menu == "🔐 Administration":
                 o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
                 if st.form_submit_button("Changer le code"):
                     if o == current_code: supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute(); st.success("Mis à jour"); st.rerun()
-                    else: st.error("Code incorrect")
+                    else: st.error("Ancien code incorrect")
     else: st.info("Saisissez le code secret.")
