@@ -270,39 +270,55 @@ elif menu == "🔐 Administration":
                         js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                         if js_fr[curr.weekday()] in jours:
                             loc = l_list[0] if l_list else ""
-                            tmp.append({"Date": format_date_fr_complete(curr, False), "Titre": "", "Lieu": loc, "Horaire": h_list[0] if h_list else "", "Capacité": map_l_cap.get(loc, 10), "Actif": True})
+                            tmp.append({
+                                "Date": format_date_fr_complete(curr, False), 
+                                "Titre": "", 
+                                "Lieu": loc, 
+                                "Horaire": h_list[0] if h_list else "", 
+                                "Capacité": map_l_cap.get(loc, 10), 
+                                "Actif": True
+                            })
                         curr += timedelta(days=1)
                     st.session_state['at_list_gen'] = tmp
 
-                if 'at_list_gen' in st.session_state:
-                    # Logique de mise à jour automatique de la capacité lors du changement de lieu
-                    df_base = pd.DataFrame(st.session_state['at_list_gen'])
-                    
-                    df_ed = st.data_editor(df_base, num_rows="dynamic", column_config={
-                        "Lieu": st.column_config.SelectboxColumn(options=l_list, required=True),
-                        "Horaire": st.column_config.SelectboxColumn(options=h_list, required=True),
-                        "Actif": st.column_config.CheckboxColumn(default=True)
-                    }, use_container_width=True, key="generator_editor")
-                    
-                    # Détection du changement de lieu pour ajuster la capacité
-                    if not df_ed.equals(df_base):
-                        for i, row in df_ed.iterrows():
-                            if i < len(df_base) and row['Lieu'] != df_base.at[i, 'Lieu']:
-                                df_ed.at[i, 'Capacité'] = map_l_cap.get(row['Lieu'], 10)
-                        st.session_state['at_list_gen'] = df_ed.to_dict('records')
+                if 'at_list_gen' in st.session_state and st.session_state['at_list_gen']:
+                    # Utilisation d'un DataFrame pour l'éditeur
+                    df_ed = st.data_editor(
+                        pd.DataFrame(st.session_state['at_list_gen']), 
+                        num_rows="dynamic", 
+                        column_config={
+                            "Lieu": st.column_config.SelectboxColumn(options=l_list, required=True),
+                            "Horaire": st.column_config.SelectboxColumn(options=h_list, required=True),
+                            "Actif": st.column_config.CheckboxColumn(default=True)
+                        }, 
+                        use_container_width=True,
+                        key="editor_ateliers"
+                    )
                     
                     if st.button("💾 Enregistrer les ateliers"):
                         to_db = []
                         for _, r in df_ed.iterrows():
+                            # Ajustement dynamique de la capacité si non modifiée manuellement
+                            cap_finale = r['Capacité']
+                            if r['Lieu'] in map_l_cap and r['Capacité'] == 10: 
+                                cap_finale = map_l_cap[r['Lieu']]
+
                             if r['Actif'] and not str(r['Titre']).strip():
                                 st.error(f"Titre obligatoire pour le {r['Date']}"); st.stop()
+                            
                             to_db.append({
                                 "date_atelier": parse_date_fr_to_iso(r['Date']),
-                                "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']],
-                                "capacite_max": int(r['Capacité']), "est_actif": bool(r['Actif'])
+                                "titre": r['Titre'], 
+                                "lieu_id": map_l_id[r['Lieu']], 
+                                "horaire_id": map_h_id[r['Horaire']],
+                                "capacite_max": int(cap_finale), 
+                                "est_actif": bool(r['Actif'])
                             })
-                        if to_db: supabase.table("ateliers").insert(to_db).execute()
-                        st.session_state['at_list_gen'] = []; st.rerun()
+                        if to_db: 
+                            supabase.table("ateliers").insert(to_db).execute()
+                            st.success(f"{len(to_db)} ateliers enregistrés.")
+                            st.session_state['at_list_gen'] = []
+                            st.rerun()
 
             elif sub == "Répertoire":
                 cf1, cf2, cf3 = st.columns(3)
@@ -347,7 +363,8 @@ elif menu == "🔐 Administration":
             with cl1:
                 st.subheader("Lieux")
                 for l in l_raw:
-                    ca, cb = st.columns([0.8, 0.2]); ca.write(l['nom'])
+                    ca, cb = st.columns([0.8, 0.2])
+                    ca.markdown(f"<span class='lieu-badge' style='background-color:{get_color(l['nom'])}'>{l['nom']} (Cap: {l['capacite_accueil']})</span>", unsafe_allow_html=True)
                     if cb.button("🗑️", key=f"lx_del_{l['id']}"): secure_delete_dialog("lieux", l['id'], l['nom'], current_code)
                 with st.form("add_lx"):
                     nl, cp = st.text_input("Nouveau Lieu"), st.number_input("Capacité", 1, 50, 10)
@@ -356,7 +373,7 @@ elif menu == "🔐 Administration":
             with cl2:
                 st.subheader("Horaires")
                 for h in h_raw:
-                    cc, cd = st.columns([0.8, 0.2]); cc.write(h['libelle'])
+                    cc, cd = st.columns([0.8, 0.2]); cc.write(f"• {h['libelle']}")
                     if cd.button("🗑️", key=f"hx_del_{h['id']}"): secure_delete_dialog("horaires", h['id'], h['libelle'], current_code)
                 with st.form("add_hx"):
                     nh = st.text_input("Nouvel Horaire")
@@ -369,6 +386,6 @@ elif menu == "🔐 Administration":
                 if st.form_submit_button("Changer le code"):
                     if o == current_code: 
                         supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
-                        st.rerun()
+                        st.success("Code mis à jour"); st.rerun()
                     else: st.error("Ancien code incorrect")
     else: st.info("Saisissez le code secret.")
