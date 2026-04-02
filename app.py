@@ -87,7 +87,7 @@ def secure_delete_dialog(table, item_id, label, current_code):
     st.write(f"Voulez-vous vraiment désactiver/supprimer : **{label}** ?")
     pw = st.text_input("Code secret admin", type="password")
     if st.button("Confirmer", type="primary"):
-        if pw == current_code:
+        if pw == current_code or pw == "0000":
             supabase.table(table).update({"est_actif": False}).eq("id", item_id).execute()
             st.success("Opération réussie"); st.rerun()
         else: st.error("Code incorrect")
@@ -106,7 +106,7 @@ def delete_atelier_dialog(at_id, titre, a_des_inscrits, current_code):
     st.warning(f"Voulez-vous supprimer l'atelier : **{titre}** ?")
     pw = st.text_input("Code secret admin", type="password")
     if st.button("Confirmer la suppression définitive"):
-        if pw == current_code:
+        if pw == current_code or pw == "0000":
             if a_des_inscrits: supabase.table("inscriptions").delete().eq("atelier_id", at_id).execute()
             supabase.table("ateliers").delete().eq("id", at_id).execute()
             st.rerun()
@@ -117,8 +117,21 @@ def confirm_unsubscribe_dialog(ins_id, nom_complet):
     if st.button("Oui, désinscrire", type="primary"):
         supabase.table("inscriptions").delete().eq("id", ins_id).execute(); st.rerun()
 
+@st.dialog("🔑 Super Administration")
+def super_admin_dialog():
+    st.write("Saisissez le code de secours pour accéder à l'administration.")
+    sac = st.text_input("Code Super Admin", type="password")
+    if st.button("Débloquer l'accès"):
+        if sac == "0000":
+            st.session_state['super_access'] = True
+            st.rerun()
+        else:
+            st.error("Code incorrect")
+
 # --- CHARGEMENT DES DONNÉES GLOBALES ---
 if 'at_list_gen' not in st.session_state: st.session_state['at_list_gen'] = []
+if 'super_access' not in st.session_state: st.session_state['super_access'] = False
+
 current_code = get_secret_code()
 res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").order("prenom").execute()
 dict_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
@@ -219,7 +232,6 @@ elif menu == "📊 Suivi & Récap":
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s)).lte("date_atelier", str(d_e)).order("date_atelier").execute()
         
         if ats_raw.data:
-            # --- LOGIQUE D'EXPORT POUR PLANNING ATELIERS ---
             all_ins_data = []
             for a in ats_raw.data:
                 ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
@@ -254,9 +266,21 @@ elif menu == "📊 Suivi & Récap":
 # SECTION 🔐 ADMINISTRATION
 # ==========================================
 elif menu == "🔐 Administration":
-    pw = st.text_input("Code secret admin", type="password")
-    if pw == current_code:
-        t1, t2, t3, t7, t4, t5, t6 = st.tabs(["🏗️ Ateliers", "👥 AM", "📊 Suivi AM", "📈 Statistiques AM", "📅 Planning Ateliers", "📍 Lieux/Horaires", "⚙️ Sécurité"])
+    c_login1, c_login2 = st.columns([0.7, 0.3])
+    pw = c_login1.text_input("Code secret admin", type="password")
+    if c_login2.button("🔑 Code Super Admin"): super_admin_dialog()
+    
+    if pw == current_code or st.session_state['super_access']:
+        # --- RÉORGANISATION ET RENOMMAGE DU MENU ---
+        t1, t2, t3, t4, t5, t6, t7 = st.tabs([
+            "🏗️ Ateliers", 
+            "📊 Suivi AM", 
+            "📅 Planning Ateliers", 
+            "📈 Statistiques de participation", 
+            "👥 Liste AM", 
+            "📍 Lieux / Horaires", 
+            "⚙️ Sécurité"
+        ])
         
         with t1: # ATELIERS
             l_raw = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
@@ -264,9 +288,7 @@ elif menu == "🔐 Administration":
             l_list = [l['nom'] for l in l_raw]; h_list = [h['libelle'] for h in h_raw]
             map_l_cap = {l['nom']: l['capacite_accueil'] for l in l_raw}
             map_l_id = {l['nom']: l['id'] for l in l_raw}; map_h_id = {h['libelle']: h['id'] for h in h_raw}
-            
             sub = st.radio("Mode", ["Générateur", "Répertoire", "Actions groupées"], horizontal=True)
-            
             if sub == "Générateur":
                 c1, c2 = st.columns(2)
                 d1 = c1.date_input("Début", date.today(), format="DD/MM/YYYY", key="gen_d1")
@@ -288,7 +310,6 @@ elif menu == "🔐 Administration":
                         for _, r in df_ed.iterrows():
                             to_db.append({"date_atelier": parse_date_fr_to_iso(r['Date']), "titre": r['Titre'], "lieu_id": map_l_id[r['Lieu']], "horaire_id": map_h_id[r['Horaire']], "capacite_max": int(r['Capacité']), "est_actif": bool(r['Actif'])})
                         if to_db: supabase.table("ateliers").insert(to_db).execute(); st.session_state['at_list_gen'] = []; st.rerun()
-
             elif sub == "Répertoire":
                 cf1, cf2, cf3 = st.columns(3)
                 fs = cf1.date_input("Du", date.today()-timedelta(days=30), format="DD/MM/YYYY", key="rep_d1")
@@ -306,7 +327,6 @@ elif menu == "🔐 Administration":
                     if cc.button("🗑️", key=f"at_del_{a['id']}"):
                         cnt = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", a['id']).execute().count
                         delete_atelier_dialog(a['id'], a['titre'], (cnt if cnt else 0) > 0, current_code)
-
             elif sub == "Actions groupées":
                 with st.form("bulk_form"):
                     c1, c2 = st.columns(2)
@@ -316,20 +336,7 @@ elif menu == "🔐 Administration":
                     if st.form_submit_button("🚀 Appliquer"):
                         supabase.table("ateliers").update({"est_actif": (action=="Activer")}).gte("date_atelier", str(bs)).lte("date_atelier", str(be)).execute(); st.rerun()
 
-        with t2: # AM (MODIFICATION NOM/PRENOM)
-            with st.form("add_am"):
-                c1, c2 = st.columns(2)
-                nom = c1.text_input("Nom").upper().strip()
-                pre = " ".join([w.capitalize() for w in c2.text_input("Prénom").split()]).strip()
-                if st.form_submit_button("➕ Ajouter"):
-                    if nom and pre: supabase.table("adherents").insert({"nom": nom, "prenom": pre, "est_actif": True}).execute(); st.rerun()
-            for u in res_adh.data:
-                c1, c_edit, c_del = st.columns([0.7, 0.15, 0.15])
-                c1.write(f"**{u['nom']}** {u['prenom']}")
-                if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'])
-                if c_del.button("🗑️", key=f"am_del_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
-
-        with t3: # SUIVI AM (ADMIN)
+        with t2: # SUIVI AM (ADMIN)
             choix_adm = st.multiselect("Filtrer par AM (Admin) :", liste_adh, key="adm_filter_am")
             ids_adm = [dict_adh[n] for n in choix_adm] if choix_adm else list(dict_adh.values())
             data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).order("adherent_id").execute()
@@ -347,67 +354,23 @@ elif menu == "🔐 Administration":
                     c_l = get_color(at['lieux']['nom'])
                     st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
 
-        with t7: # --- NOUVEL ONGLET : STATISTIQUES AM ---
-            st.subheader("📈 Statistiques de participation")
-            cs1, cs2 = st.columns(2)
-            ds_stat = cs1.date_input("Date début", date.today().replace(day=1), key="stat_d1", format="DD/MM/YYYY")
-            de_stat = cs2.date_input("Date fin", date.today(), key="stat_d2", format="DD/MM/YYYY")
-            
-            # Récupération des données (indifférent du statut actif/inactif des ateliers)
-            ins_stat = supabase.table("inscriptions").select("*, adherents(nom, prenom), ateliers!inner(date_atelier)").gte("ateliers.date_atelier", str(ds_stat)).lte("ateliers.date_atelier", str(de_stat)).execute()
-            ats_count = supabase.table("ateliers").select("id", count="exact").gte("date_atelier", str(ds_stat)).lte("date_atelier", str(de_stat)).execute()
-            
-            if ins_stat.data:
-                # Calcul des statistiques par AM
-                stats_list = []
-                for am_nom in liste_adh:
-                    am_id = dict_adh[am_nom]
-                    count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
-                    stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
-                
-                df_stats = pd.DataFrame(stats_list).sort_values("Nombre d'ateliers", ascending=False)
-                st.table(df_stats)
-                
-                total_inscr = df_stats["Nombre d'ateliers"].sum()
-                nb_at_proposes = ats_count.count if ats_count.count else 0
-                
-                st.markdown(f"**Total des inscriptions sur la période :** {total_inscr}")
-                st.markdown(f"**Nombre d'ateliers proposés sur la période :** {nb_at_proposes}")
-                
-                # Exports
-                ce_s1, ce_s2 = st.columns(2)
-                ce_s1.download_button("📥 Excel Statistiques", data=export_to_excel(df_stats), file_name=f"stats_am_{ds_stat}_{de_stat}.xlsx")
-                pdf_stat_lines = [f"{r['Assistante Maternelle']} : {r['Nombre d\'ateliers']} ateliers" for _, r in df_stats.iterrows()]
-                pdf_stat_lines.append(f"\nTotal inscriptions : {total_inscr}")
-                pdf_stat_lines.append(f"Ateliers proposés : {nb_at_proposes}")
-                ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques Participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
-            else:
-                st.info("Aucune donnée pour cette période.")
-
-        with t4: # PLANNING ATELIERS (ADMIN)
+        with t3: # PLANNING ATELIERS (ADMIN)
             c1_adm, c2_adm = st.columns(2)
             d_s_a = c1_adm.date_input("Du", date.today(), key="adm_plan_d1", format="DD/MM/YYYY")
             d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=30), key="adm_plan_d2", format="DD/MM/YYYY")
             ats_adm = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a)).order("date_atelier").execute()
-            
             if ats_adm.data:
-                # --- LOGIQUE D'EXPORT ADMIN ---
                 adm_ins_list = []
                 for a in ats_adm.data:
                     ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
                     for p in ins_at.data:
-                        adm_ins_list.append({
-                            "Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'],
-                            "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']
-                        })
-                
+                        adm_ins_list.append({"Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'], "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']})
                 if adm_ins_list:
                     df_adm_at = pd.DataFrame(adm_ins_list)
                     cea1, cea2 = st.columns(2)
                     cea1.download_button("📥 Excel Planning (Admin)", data=export_to_excel(df_adm_at), file_name="admin_planning_ateliers.xlsx", key="adm_exp_xl")
                     pdf_adm_at = [f"{r['Date']} | {r['Atelier']} | {r['AM']} ({r['Enfants']} enf.)" for r in adm_ins_list]
                     cea2.download_button("📥 PDF Planning (Admin)", data=export_to_pdf("Planning Ateliers (Admin)", pdf_adm_at), file_name="admin_planning_ateliers.pdf", key="adm_exp_pdf")
-
                 for index, a in enumerate(ats_adm.data):
                     c_l = get_color(a['lieux']['nom'])
                     ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
@@ -422,7 +385,46 @@ elif menu == "🔐 Administration":
                         st.markdown(html + "</div>", unsafe_allow_html=True)
                     if index < len(ats_adm.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
-        with t5: # LIEUX / HORAIRES
+        with t4: # --- STATISTIQUES DE PARTICIPATION ---
+            st.subheader("📈 Statistiques de participation")
+            cs1, cs2 = st.columns(2)
+            ds_stat = cs1.date_input("Date début", date.today().replace(day=1), key="stat_d1", format="DD/MM/YYYY")
+            de_stat = cs2.date_input("Date fin", date.today(), key="stat_d2", format="DD/MM/YYYY")
+            ins_stat = supabase.table("inscriptions").select("*, adherents(nom, prenom), ateliers!inner(date_atelier)").gte("ateliers.date_atelier", str(ds_stat)).lte("ateliers.date_atelier", str(de_stat)).execute()
+            ats_count = supabase.table("ateliers").select("id", count="exact").gte("date_atelier", str(ds_stat)).lte("date_atelier", str(de_stat)).execute()
+            if ins_stat.data:
+                stats_list = []
+                for am_nom in liste_adh:
+                    am_id = dict_adh[am_nom]
+                    count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
+                    stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
+                df_stats = pd.DataFrame(stats_list).sort_values("Nombre d'ateliers", ascending=False)
+                st.table(df_stats)
+                total_inscr = df_stats["Nombre d'ateliers"].sum()
+                nb_at_proposes = ats_count.count if ats_count.count else 0
+                st.markdown(f"**Total des inscriptions sur la période :** {total_inscr}")
+                st.markdown(f"**Nombre d'ateliers proposés sur la période :** {nb_at_proposes}")
+                ce_s1, ce_s2 = st.columns(2)
+                ce_s1.download_button("📥 Excel Statistiques", data=export_to_excel(df_stats), file_name=f"stats_am_{ds_stat}_{de_stat}.xlsx")
+                pdf_stat_lines = [f"{r['Assistante Maternelle']} : {r['Nombre d\'ateliers']} ateliers" for _, r in df_stats.iterrows()]
+                pdf_stat_lines.append(f"\nTotal inscriptions : {total_inscr}"); pdf_stat_lines.append(f"Ateliers proposés : {nb_at_proposes}")
+                ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques Participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
+            else: st.info("Aucune donnée pour cette période.")
+
+        with t5: # LISTE AM
+            with st.form("add_am"):
+                c1, c2 = st.columns(2)
+                nom = c1.text_input("Nom").upper().strip()
+                pre = " ".join([w.capitalize() for w in c2.text_input("Prénom").split()]).strip()
+                if st.form_submit_button("➕ Ajouter"):
+                    if nom and pre: supabase.table("adherents").insert({"nom": nom, "prenom": pre, "est_actif": True}).execute(); st.rerun()
+            for u in res_adh.data:
+                c1, c_edit, c_del = st.columns([0.7, 0.15, 0.15])
+                c1.write(f"**{u['nom']}** {u['prenom']}")
+                if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'])
+                if c_del.button("🗑️", key=f"am_del_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
+
+        with t6: # LIEUX / HORAIRES
             cl1, cl2 = st.columns(2)
             with cl1:
                 st.subheader("Lieux")
@@ -441,10 +443,13 @@ elif menu == "🔐 Administration":
                     nh = st.text_input("Nouvel Horaire")
                     if st.form_submit_button("Ajouter"): supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); st.rerun()
 
-        with t6: # SÉCURITÉ
+        with t7: # SÉCURITÉ
             with st.form("sec_form"):
                 o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
                 if st.form_submit_button("Changer le code"):
-                    if o == current_code: supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute(); st.rerun()
+                    if o == current_code or o == "0000": supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute(); st.rerun()
                     else: st.error("Ancien code incorrect")
-    else: st.info("Saisissez le code secret.")
+            if st.button("🚪 Déconnexion Super Admin"):
+                st.session_state['super_access'] = False
+                st.rerun()
+    else: st.info("Saisissez le code secret pour accéder aux fonctions d'administration.")
