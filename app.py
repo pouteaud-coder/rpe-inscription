@@ -153,7 +153,7 @@ liste_adh = list(dict_adh.keys())
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "📊 Suivi & Récap", "🔐 Administration"])
 
 # ==========================================
-# SECTION 📝 INSCRIPTIONS (IDENTIQUE V9)
+# SECTION 📝 INSCRIPTIONS (AVEC SYSTÈME ADMIN)
 # ==========================================
 if menu == "📝 Inscriptions":
     st.header("📍 Inscriptions")
@@ -164,49 +164,61 @@ if menu == "📝 Inscriptions":
         res_at = supabase.table("ateliers").select("*, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
         
         for at in res_at.data:
+            # Système de verrouillage si le titre contient (Admin)
+            est_verrouille = "(Admin)" in at['titre']
+            
             res_ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", at['id']).execute()
             total_occ = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_ins.data])
             restantes = at['capacite_max'] - total_occ
-            statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
-            at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"
             
+            statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
+            if est_verrouille:
+                statut_p = "🔒 Réservé Admin"
+                
+            at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"
             titre_label = f"{format_date_fr_complete(at['date_atelier'])} — {at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
             
             with st.expander(titre_label):
+                if est_verrouille:
+                    st.warning("⚠️ Les inscriptions pour cet atelier sont gérées uniquement par le RPE.")
+                
                 if res_ins.data:
                     for i in res_ins.data:
                         c_nom, c_poub = st.columns([0.88, 0.12])
                         n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
                         c_nom.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
-                        if c_poub.button("🗑️", key=f"del_{i['id']}"): 
-                            confirm_unsubscribe_dialog(i['id'], n_f, at_info_log, user_principal)
+                        
+                        if not est_verrouille:
+                            if c_poub.button("🗑️", key=f"del_{i['id']}"): 
+                                confirm_unsubscribe_dialog(i['id'], n_f, at_info_log, user_principal)
                 
-                st.markdown("---")
-                try: idx_def = (liste_adh.index(user_principal) + 1)
-                except: idx_def = 0
-                c1, c2, c3 = st.columns([2, 1, 1])
-                qui = c1.selectbox("Qui ?", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
-                nb_e = c2.number_input("Enfants", 1, 10, 1, key=f"e_{at['id']}")
-                
-                if c3.button("Valider", key=f"v_{at['id']}", type="primary"):
-                    if qui != "Choisir...":
-                        id_adh = dict_adh[qui]
-                        existing = next((ins for ins in res_ins.data if ins['adherent_id'] == id_adh), None)
-                        if existing:
-                            if restantes - (nb_e - existing['nb_enfants']) < 0: st.error("Manque de places")
-                            else: 
-                                supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
-                                enregistrer_log(user_principal, "Modification", f"{qui} change à {nb_e} enfants - {at_info_log}")
-                                st.rerun()
-                        else:
-                            if restantes - (1 + nb_e) < 0: st.error("Manque de places")
-                            else: 
-                                supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
-                                enregistrer_log(user_principal, "Inscription", f"{qui} s'inscrit (+{nb_e} enf.) - {at_info_log}")
-                                st.rerun()
+                if not est_verrouille:
+                    st.markdown("---")
+                    try: idx_def = (liste_adh.index(user_principal) + 1)
+                    except: idx_def = 0
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    qui = c1.selectbox("Qui ?", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
+                    nb_e = c2.number_input("Enfants", 1, 10, 1, key=f"e_{at['id']}")
+                    
+                    if c3.button("Valider", key=f"v_{at['id']}", type="primary"):
+                        if qui != "Choisir...":
+                            id_adh = dict_adh[qui]
+                            existing = next((ins for ins in res_ins.data if ins['adherent_id'] == id_adh), None)
+                            if existing:
+                                if restantes - (nb_e - existing['nb_enfants']) < 0: st.error("Manque de places")
+                                else: 
+                                    supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
+                                    enregistrer_log(user_principal, "Modification", f"{qui} change à {nb_e} enfants - {at_info_log}")
+                                    st.rerun()
+                            else:
+                                if restantes - (1 + nb_e) < 0: st.error("Manque de places")
+                                else: 
+                                    supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
+                                    enregistrer_log(user_principal, "Inscription", f"{qui} s'inscrit (+{nb_e} enf.) - {at_info_log}")
+                                    st.rerun()
 
 # ==========================================
-# SECTION 📊 SUIVI & RÉCAP (IDENTIQUE V9)
+# SECTION 📊 SUIVI & RÉCAP
 # ==========================================
 elif menu == "📊 Suivi & Récap":
     st.header("🔎 Consultation")
@@ -278,7 +290,7 @@ elif menu == "📊 Suivi & Récap":
                 if index < len(ats_raw.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION (IDENTIQUE V9)
+# SECTION 🔐 ADMINISTRATION
 # ==========================================
 elif menu == "🔐 Administration":
     c_login1, c_login2 = st.columns([0.7, 0.3])
@@ -462,7 +474,7 @@ elif menu == "🔐 Administration":
                     else: st.error("Ancien code incorrect")
             if st.button("🚪 Déconnexion Super Admin"): st.session_state['super_access'] = False; st.rerun()
 
-        with t8: # 📜 JOURNAL DES ACTIONS (CORRIGÉ TRI)
+        with t8: # 📜 JOURNAL DES ACTIONS
             st.subheader("📜 Journal des manipulations")
             cj1, cj2 = st.columns(2)
             dj_s = cj1.date_input("Depuis le", date.today() - timedelta(days=7), format="DD/MM/YYYY", key="log_d1")
@@ -472,7 +484,6 @@ elif menu == "🔐 Administration":
             end_date = dj_e.strftime("%Y-%m-%d") + "T23:59:59"
             
             try:
-                # Utilisation de desc=True pour le tri
                 res_logs = supabase.table("logs").select("*").gte("created_at", start_date).lte("created_at", end_date).order("created_at", desc=True).execute()
                 if res_logs.data:
                     logs_df = pd.DataFrame(res_logs.data)
