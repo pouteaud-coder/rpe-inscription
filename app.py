@@ -349,14 +349,30 @@ elif menu == "🔐 Administration":
 
         with t4: # PLANNING ATELIERS (ADMIN)
             c_d1, c_d2 = st.columns(2)
-            s_adm = c_d1.date_input("Du", date.today(), key="adm_d1")
-            e_adm = c_d2.date_input("Au", s_adm+timedelta(days=30), key="adm_d2")
-            ats_adm = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(s_adm)).lte("date_atelier", str(e_adm)).order("date_atelier").execute()
-            for a in ats_adm.data:
-                ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
-                st.markdown(f"**{a['date_atelier']}** - {a['titre']} ({len(ins.data)} AM)")
-                for p in ins.data: st.write(f"   └ {p['adherents']['prenom']} {p['adherents']['nom']} ({p['nb_enfants']} enf.)")
-
+        d_start = c_d1.date_input("Du", date.today(), format="DD/MM/YYYY")
+        d_end = c_d2.date_input("Au", d_start + timedelta(days=30), format="DD/MM/YYYY")
+        
+        ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_start)).lte("date_atelier", str(d_end)).order("date_atelier").execute()
+        
+        if ats_raw.data:
+            for index, a in enumerate(ats_raw.data):
+                c_l = get_color(a['lieux']['nom'])
+                ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
+                t_ad, t_en = len(ins_at.data), sum([p['nb_enfants'] for p in ins_at.data])
+                restantes = a['capacite_max'] - (t_ad + t_en)
+                classe_complet = "alerte-complet" if restantes <= 0 else ""
+                
+                st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span> <span class='compteur-badge'>👤 {t_ad} AM</span> <span class='compteur-badge'>👶 {t_en} enf.</span> <span class='compteur-badge {classe_complet}'>🏁 {restantes} pl.</span>", unsafe_allow_html=True)
+                
+                if not ins_at.data: st.markdown("<div class='container-inscrits'><span style='font-size:0.85rem; margin-left:20px; color:gray;'>Aucun inscrit</span></div>", unsafe_allow_html=True)
+                else:
+                    ins_sorted = sorted(ins_at.data, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
+                    html = "<div class='container-inscrits'>"
+                    for p in ins_sorted: html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
+                    st.markdown(html + "</div>", unsafe_allow_html=True)
+                if index < len(ats_raw.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
+        
+        
         with t5: # LIEUX / HORAIRES
             cl1, cl2 = st.columns(2)
             with cl1:
