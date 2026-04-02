@@ -219,6 +219,23 @@ elif menu == "📊 Suivi & Récap":
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s)).lte("date_atelier", str(d_e)).order("date_atelier").execute()
         
         if ats_raw.data:
+            # --- LOGIQUE D'EXPORT POUR PLANNING ATELIERS ---
+            all_ins_data = []
+            for a in ats_raw.data:
+                ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
+                for p in ins_at.data:
+                    all_ins_data.append({
+                        "Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'],
+                        "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']
+                    })
+            
+            if all_ins_data:
+                df_at_exp = pd.DataFrame(all_ins_data)
+                ce1, ce2 = st.columns(2)
+                ce1.download_button("📥 Excel Planning", data=export_to_excel(df_at_exp), file_name="planning_ateliers.xlsx", key="exp_at_xl")
+                pdf_at_lines = [f"{r['Date']} | {r['Atelier']} ({r['Lieu']}) | AM: {r['AM']} ({r['Enfants']} enf.)" for r in all_ins_data]
+                ce2.download_button("📥 PDF Planning", data=export_to_pdf("Planning Ateliers", pdf_at_lines), file_name="planning_ateliers.pdf", key="exp_at_pdf")
+
             for index, a in enumerate(ats_raw.data):
                 c_l = get_color(a['lieux']['nom'])
                 ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
@@ -241,7 +258,7 @@ elif menu == "🔐 Administration":
     if pw == current_code:
         t1, t2, t3, t4, t5, t6 = st.tabs(["🏗️ Ateliers", "👥 AM", "📊 Suivi AM", "📅 Planning Ateliers", "📍 Lieux/Horaires", "⚙️ Sécurité"])
         
-        with t1: # ATELIERS (Générateur, Répertoire, Actions groupées)
+        with t1: # ATELIERS
             l_raw = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
             h_raw = supabase.table("horaires").select("*").eq("est_actif", True).execute().data
             l_list = [l['nom'] for l in l_raw]; h_list = [h['libelle'] for h in h_raw]
@@ -312,7 +329,7 @@ elif menu == "🔐 Administration":
                 if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'])
                 if c_del.button("🗑️", key=f"am_del_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
 
-        with t3: # SUIVI AM (ADMIN) - Même apparence que Suivi public
+        with t3: # SUIVI AM (ADMIN)
             choix_adm = st.multiselect("Filtrer par AM (Admin) :", liste_adh, key="adm_filter_am")
             ids_adm = [dict_adh[n] for n in choix_adm] if choix_adm else list(dict_adh.values())
             data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).order("adherent_id").execute()
@@ -330,12 +347,30 @@ elif menu == "🔐 Administration":
                     c_l = get_color(at['lieux']['nom'])
                     st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
 
-        with t4: # PLANNING ATELIERS (ADMIN) - Même apparence que Suivi public
+        with t4: # PLANNING ATELIERS (ADMIN)
             c1_adm, c2_adm = st.columns(2)
             d_s_a = c1_adm.date_input("Du", date.today(), key="adm_plan_d1", format="DD/MM/YYYY")
             d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=30), key="adm_plan_d2", format="DD/MM/YYYY")
             ats_adm = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a)).order("date_atelier").execute()
+            
             if ats_adm.data:
+                # --- LOGIQUE D'EXPORT ADMIN ---
+                adm_ins_list = []
+                for a in ats_adm.data:
+                    ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
+                    for p in ins_at.data:
+                        adm_ins_list.append({
+                            "Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'],
+                            "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']
+                        })
+                
+                if adm_ins_list:
+                    df_adm_at = pd.DataFrame(adm_ins_list)
+                    cea1, cea2 = st.columns(2)
+                    cea1.download_button("📥 Excel Planning (Admin)", data=export_to_excel(df_adm_at), file_name="admin_planning_ateliers.xlsx", key="adm_exp_xl")
+                    pdf_adm_at = [f"{r['Date']} | {r['Atelier']} | {r['AM']} ({r['Enfants']} enf.)" for r in adm_ins_list]
+                    cea2.download_button("📥 PDF Planning (Admin)", data=export_to_pdf("Planning Ateliers (Admin)", pdf_adm_at), file_name="admin_planning_ateliers.pdf", key="adm_exp_pdf")
+
                 for index, a in enumerate(ats_adm.data):
                     c_l = get_color(a['lieux']['nom'])
                     ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
