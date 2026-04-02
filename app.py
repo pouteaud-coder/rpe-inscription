@@ -47,15 +47,12 @@ def get_secret_code():
 def enregistrer_log(utilisateur, action, details):
     """Enregistre une action dans la table logs"""
     try:
-        # Correction : On force le format ISO pour created_at si nécessaire, 
-        # mais Supabase le fait souvent seul. On s'assure surtout que les data sont envoyées.
         supabase.table("logs").insert({
             "utilisateur": utilisateur,
             "action": action,
             "details": details
         }).execute()
-    except Exception as e:
-        # Silencieux pour l'utilisateur mais évite le blocage
+    except:
         pass
 
 def format_date_fr_complete(date_obj, gras=True):
@@ -129,7 +126,6 @@ def delete_atelier_dialog(at_id, titre, a_des_inscrits, current_code):
 def confirm_unsubscribe_dialog(ins_id, nom_complet, atelier_info, user_admin="Utilisateur"):
     st.warning(f"Souhaitez-vous vraiment annuler la réservation de **{nom_complet}** ?")
     if st.button("Oui, désinscrire", type="primary"):
-        # Log AVANT la suppression pour garder la trace
         enregistrer_log(user_admin, "Désinscription", f"Annulation pour {nom_complet} - {atelier_info}")
         supabase.table("inscriptions").delete().eq("id", ins_id).execute()
         st.rerun()
@@ -350,7 +346,7 @@ elif menu == "🔐 Administration":
                     if st.form_submit_button("🚀 Appliquer"):
                         supabase.table("ateliers").update({"est_actif": (action=="Activer")}).gte("date_atelier", str(bs)).lte("date_atelier", str(be)).execute(); st.rerun()
 
-        with t2: # SUIVI AM (ADMIN)
+        with t2: # SUIVI AM
             choix_adm = st.multiselect("Filtrer par AM (Admin) :", liste_adh, key="adm_filter_am")
             ids_adm = [dict_adh[n] for n in choix_adm] if choix_adm else list(dict_adh.values())
             data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).order("adherent_id").execute()
@@ -368,7 +364,7 @@ elif menu == "🔐 Administration":
                     c_l = get_color(at['lieux']['nom'])
                     st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
 
-        with t3: # PLANNING ATELIERS (ADMIN)
+        with t3: # PLANNING
             c1_adm, c2_adm = st.columns(2)
             d_s_a = c1_adm.date_input("Du", date.today(), key="adm_plan_d1", format="DD/MM/YYYY")
             d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=30), key="adm_plan_d2", format="DD/MM/YYYY")
@@ -426,7 +422,7 @@ elif menu == "🔐 Administration":
                 ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques Participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
             else: st.info("Aucune donnée pour cette période.")
 
-        with t5: # 👥 LISTE AM (IDENTIQUE V9)
+        with t5: # 👥 LISTE AM
             with st.form("add_am"):
                 c1, c2 = st.columns(2)
                 nom = c1.text_input("Nom").upper().strip()
@@ -439,7 +435,7 @@ elif menu == "🔐 Administration":
                 if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'])
                 if c_del.button("🗑️", key=f"am_del_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
 
-        with t6: # 📍 LIEUX / HORAIRES (IDENTIQUE V9)
+        with t6: # 📍 LIEUX / HORAIRES
             cl1, cl2 = st.columns(2)
             with cl1:
                 st.subheader("Lieux")
@@ -458,7 +454,7 @@ elif menu == "🔐 Administration":
                     nh = st.text_input("Nouvel Horaire")
                     if st.form_submit_button("Ajouter"): supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); st.rerun()
 
-        with t7: # ⚙️ SÉCURITÉ (IDENTIQUE V9)
+        with t7: # ⚙️ SÉCURITÉ
             with st.form("sec_form"):
                 o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
                 if st.form_submit_button("Changer le code"):
@@ -466,20 +462,18 @@ elif menu == "🔐 Administration":
                     else: st.error("Ancien code incorrect")
             if st.button("🚪 Déconnexion Super Admin"): st.session_state['super_access'] = False; st.rerun()
 
-    with t8: # 📜 JOURNAL DES ACTIONS (CORRIGÉ)
+        with t8: # 📜 JOURNAL DES ACTIONS (CORRIGÉ TRI)
             st.subheader("📜 Journal des manipulations")
             cj1, cj2 = st.columns(2)
             dj_s = cj1.date_input("Depuis le", date.today() - timedelta(days=7), format="DD/MM/YYYY", key="log_d1")
             dj_e = cj2.date_input("Jusqu'au", date.today(), format="DD/MM/YYYY", key="log_d2")
             
-            # Formatage des dates pour Supabase
             start_date = dj_s.strftime("%Y-%m-%d") + "T00:00:00"
             end_date = dj_e.strftime("%Y-%m-%d") + "T23:59:59"
             
             try:
-                # Correction ici : desc=True remplace ascending=False
+                # Utilisation de desc=True pour le tri
                 res_logs = supabase.table("logs").select("*").gte("created_at", start_date).lte("created_at", end_date).order("created_at", desc=True).execute()
-                
                 if res_logs.data:
                     logs_df = pd.DataFrame(res_logs.data)
                     logs_df['created_at'] = pd.to_datetime(logs_df['created_at']).dt.strftime('%d/%m/%Y %H:%M')
@@ -499,4 +493,5 @@ elif menu == "🔐 Administration":
             except Exception as e:
                 st.error(f"Erreur lors du chargement du journal : {e}")
 
-    else: st.info("Saisissez le code secret pour accéder aux fonctions d'administration.")
+    else:
+        st.info("Saisissez le code secret pour accéder aux fonctions d'administration.")
