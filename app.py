@@ -335,33 +335,17 @@ elif menu == "🔐 Administration":
                 if c_del.button("🗑️", key=f"del_am_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
 
         with t3: # SUIVI AM (ADMIN)
-            choix = st.multiselect("Filtrer par assistante maternelle :", liste_adh)
-        ids = [dict_adh[n] for n in choix] if choix else list(dict_adh.values())
-        data = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids).eq("ateliers.est_actif", True).order("adherent_id").execute()
-        
-        if data.data:
-            df_export = pd.DataFrame([{
-                "Assistante Maternelle": f"{i['adherents']['prenom']} {i['adherents']['nom']}",
-                "Date": i['ateliers']['date_atelier'],
-                "Atelier": i['ateliers']['titre'],
-                "Lieu": i['ateliers']['lieux']['nom'],
-                "Nb Enfants": i['nb_enfants']
-            } for i in data.data])
-
-            c_btn1, c_btn2 = st.columns(2)
-            c_btn1.download_button("📥 Excel", data=export_to_excel(df_export), file_name="suivi_am.xlsx")
-            pdf_data = [f"{row['Assistante Maternelle']} - {row['Date']} - {row['Atelier']} ({row['Nb Enfants']} enf.)" for _, row in df_export.iterrows()]
-            c_btn2.download_button("📥 PDF", data=export_to_pdf("Recapitulatif AM", pdf_data), file_name="suivi_am.pdf")
-
-            curr_u = ""
-            for i in data.data:
-                nom_u = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
-                if nom_u != curr_u:
-                    st.markdown(f'<div style="color:#1b5e20; border-bottom:2px solid #1b5e20; padding-top:15px; margin-bottom:8px; font-weight:bold; font-size:1.2rem;">{nom_u}</div>', unsafe_allow_html=True)
-                    curr_u = nom_u
-                at = i['ateliers']
-                c_l = get_color(at['lieux']['nom'])
-                st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+            choix_adm = st.multiselect("Filtrer AM :", liste_adh, key="adm_s1")
+            ids_adm = [dict_adh[n] for n in choix_adm] if choix_adm else list(dict_adh.values())
+            data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).order("adherent_id").execute()
+            if data_adm.data:
+                df_adm = pd.DataFrame([{"AM": f"{i['adherents']['prenom']} {i['adherents']['nom']}", "Date": i['ateliers']['date_atelier'], "Titre": i['ateliers']['titre'], "Enfants": i['nb_enfants']} for i in data_adm.data])
+                st.download_button("📥 Export Excel", data=export_to_excel(df_adm), file_name="admin_suivi.xlsx")
+                curr = ""
+                for i in data_adm.data:
+                    nom = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
+                    if nom != curr: st.subheader(nom); curr = nom
+                    st.write(f"- {i['ateliers']['date_atelier']} : {i['ateliers']['titre']} ({i['nb_enfants']} enf.)")
 
         with t4: # PLANNING ATELIERS (ADMIN)
             c_d1, c_d2 = st.columns(2)
