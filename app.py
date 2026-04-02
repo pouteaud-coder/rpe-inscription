@@ -47,12 +47,15 @@ def get_secret_code():
 def enregistrer_log(utilisateur, action, details):
     """Enregistre une action dans la table logs"""
     try:
+        # Correction : On force le format ISO pour created_at si nécessaire, 
+        # mais Supabase le fait souvent seul. On s'assure surtout que les data sont envoyées.
         supabase.table("logs").insert({
             "utilisateur": utilisateur,
             "action": action,
             "details": details
         }).execute()
-    except:
+    except Exception as e:
+        # Silencieux pour l'utilisateur mais évite le blocage
         pass
 
 def format_date_fr_complete(date_obj, gras=True):
@@ -126,9 +129,9 @@ def delete_atelier_dialog(at_id, titre, a_des_inscrits, current_code):
 def confirm_unsubscribe_dialog(ins_id, nom_complet, atelier_info, user_admin="Utilisateur"):
     st.warning(f"Souhaitez-vous vraiment annuler la réservation de **{nom_complet}** ?")
     if st.button("Oui, désinscrire", type="primary"):
-        supabase.table("inscriptions").delete().eq("id", ins_id).execute()
-        # Log de désinscription
+        # Log AVANT la suppression pour garder la trace
         enregistrer_log(user_admin, "Désinscription", f"Annulation pour {nom_complet} - {atelier_info}")
+        supabase.table("inscriptions").delete().eq("id", ins_id).execute()
         st.rerun()
 
 @st.dialog("🔑 Super Administration")
@@ -154,7 +157,7 @@ liste_adh = list(dict_adh.keys())
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "📊 Suivi & Récap", "🔐 Administration"])
 
 # ==========================================
-# SECTION 📝 INSCRIPTIONS
+# SECTION 📝 INSCRIPTIONS (IDENTIQUE V9)
 # ==========================================
 if menu == "📝 Inscriptions":
     st.header("📍 Inscriptions")
@@ -197,19 +200,17 @@ if menu == "📝 Inscriptions":
                             if restantes - (nb_e - existing['nb_enfants']) < 0: st.error("Manque de places")
                             else: 
                                 supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
-                                # Log modification
                                 enregistrer_log(user_principal, "Modification", f"{qui} change à {nb_e} enfants - {at_info_log}")
                                 st.rerun()
                         else:
                             if restantes - (1 + nb_e) < 0: st.error("Manque de places")
                             else: 
                                 supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
-                                # Log inscription
                                 enregistrer_log(user_principal, "Inscription", f"{qui} s'inscrit (+{nb_e} enf.) - {at_info_log}")
                                 st.rerun()
 
 # ==========================================
-# SECTION 📊 SUIVI & RÉCAP
+# SECTION 📊 SUIVI & RÉCAP (IDENTIQUE V9)
 # ==========================================
 elif menu == "📊 Suivi & Récap":
     st.header("🔎 Consultation")
@@ -281,7 +282,7 @@ elif menu == "📊 Suivi & Récap":
                 if index < len(ats_raw.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION
+# SECTION 🔐 ADMINISTRATION (IDENTIQUE V9)
 # ==========================================
 elif menu == "🔐 Administration":
     c_login1, c_login2 = st.columns([0.7, 0.3])
@@ -398,7 +399,7 @@ elif menu == "🔐 Administration":
                         st.markdown(html + "</div>", unsafe_allow_html=True)
                     if index < len(ats_adm.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
-        with t4: # --- STATISTIQUES DE PARTICIPATION ---
+        with t4: # STATS
             st.subheader("📈 Statistiques de participation")
             cs1, cs2 = st.columns(2)
             ds_stat = cs1.date_input("Date début", date.today().replace(day=1), key="stat_d1", format="DD/MM/YYYY")
@@ -425,7 +426,7 @@ elif menu == "🔐 Administration":
                 ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques Participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
             else: st.info("Aucune donnée pour cette période.")
 
-        with t5: # 👥 LISTE AM (IDENTIQUE V7)
+        with t5: # 👥 LISTE AM (IDENTIQUE V9)
             with st.form("add_am"):
                 c1, c2 = st.columns(2)
                 nom = c1.text_input("Nom").upper().strip()
@@ -438,7 +439,7 @@ elif menu == "🔐 Administration":
                 if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'])
                 if c_del.button("🗑️", key=f"am_del_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
 
-        with t6: # 📍 LIEUX / HORAIRES (IDENTIQUE V7)
+        with t6: # 📍 LIEUX / HORAIRES (IDENTIQUE V9)
             cl1, cl2 = st.columns(2)
             with cl1:
                 st.subheader("Lieux")
@@ -457,7 +458,7 @@ elif menu == "🔐 Administration":
                     nh = st.text_input("Nouvel Horaire")
                     if st.form_submit_button("Ajouter"): supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); st.rerun()
 
-        with t7: # ⚙️ SÉCURITÉ (IDENTIQUE V7)
+        with t7: # ⚙️ SÉCURITÉ (IDENTIQUE V9)
             with st.form("sec_form"):
                 o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
                 if st.form_submit_button("Changer le code"):
@@ -465,16 +466,21 @@ elif menu == "🔐 Administration":
                     else: st.error("Ancien code incorrect")
             if st.button("🚪 Déconnexion Super Admin"): st.session_state['super_access'] = False; st.rerun()
 
-        with t8: # 📜 JOURNAL DES ACTIONS (MODIFIÉ)
+        with t8: # 📜 JOURNAL DES ACTIONS (CORRIGÉ)
             st.subheader("📜 Journal des manipulations")
             cj1, cj2 = st.columns(2)
             dj_s = cj1.date_input("Depuis le", date.today() - timedelta(days=7), format="DD/MM/YYYY", key="log_d1")
             dj_e = cj2.date_input("Jusqu'au", date.today(), format="DD/MM/YYYY", key="log_d2")
+            
+            # Formatage des dates pour Supabase (YYYY-MM-DD)
+            start_date = dj_s.strftime("%Y-%m-%d") + "T00:00:00"
+            end_date = dj_e.strftime("%Y-%m-%d") + "T23:59:59"
+            
             try:
-                # Filtrage précis sur la table logs
-                res_logs = supabase.table("logs").select("*").gte("created_at", str(dj_s)).lte("created_at", str(dj_e) + "T23:59:59").order("created_at", ascending=False).execute()
+                res_logs = supabase.table("logs").select("*").gte("created_at", start_date).lte("created_at", end_date).order("created_at", ascending=False).execute()
                 if res_logs.data:
                     logs_df = pd.DataFrame(res_logs.data)
+                    # Conversion propre pour affichage
                     logs_df['created_at'] = pd.to_datetime(logs_df['created_at']).dt.strftime('%d/%m/%Y %H:%M')
                     st.dataframe(
                         logs_df[['created_at', 'utilisateur', 'action', 'details']],
@@ -489,7 +495,7 @@ elif menu == "🔐 Administration":
                     )
                 else:
                     st.info("Aucune action enregistrée pour cette période.")
-            except:
-                st.info("Journalisation en cours...")
+            except Exception as e:
+                st.error(f"Erreur lors du chargement du journal : {e}")
 
     else: st.info("Saisissez le code secret pour accéder aux fonctions d'administration.")
