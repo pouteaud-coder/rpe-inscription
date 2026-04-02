@@ -256,7 +256,7 @@ elif menu == "📊 Suivi & Récap":
 elif menu == "🔐 Administration":
     pw = st.text_input("Code secret admin", type="password")
     if pw == current_code:
-        t1, t2, t3, t4, t5, t6 = st.tabs(["🏗️ Ateliers", "👥 AM", "📊 Suivi AM", "📅 Planning Ateliers", "📍 Lieux/Horaires", "⚙️ Sécurité"])
+        t1, t2, t3, t7, t4, t5, t6 = st.tabs(["🏗️ Ateliers", "👥 AM", "📊 Suivi AM", "📈 Statistiques AM", "📅 Planning Ateliers", "📍 Lieux/Horaires", "⚙️ Sécurité"])
         
         with t1: # ATELIERS
             l_raw = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
@@ -346,6 +346,43 @@ elif menu == "🔐 Administration":
                     at = i['ateliers']
                     c_l = get_color(at['lieux']['nom'])
                     st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+
+        with t7: # --- NOUVEL ONGLET : STATISTIQUES AM ---
+            st.subheader("📈 Statistiques de participation")
+            cs1, cs2 = st.columns(2)
+            ds_stat = cs1.date_input("Date début", date.today().replace(day=1), key="stat_d1", format="DD/MM/YYYY")
+            de_stat = cs2.date_input("Date fin", date.today(), key="stat_d2", format="DD/MM/YYYY")
+            
+            # Récupération des données (indifférent du statut actif/inactif des ateliers)
+            ins_stat = supabase.table("inscriptions").select("*, adherents(nom, prenom), ateliers!inner(date_atelier)").gte("ateliers.date_atelier", str(ds_stat)).lte("ateliers.date_atelier", str(de_stat)).execute()
+            ats_count = supabase.table("ateliers").select("id", count="exact").gte("date_atelier", str(ds_stat)).lte("date_atelier", str(de_stat)).execute()
+            
+            if ins_stat.data:
+                # Calcul des statistiques par AM
+                stats_list = []
+                for am_nom in liste_adh:
+                    am_id = dict_adh[am_nom]
+                    count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
+                    stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
+                
+                df_stats = pd.DataFrame(stats_list).sort_values("Nombre d'ateliers", ascending=False)
+                st.table(df_stats)
+                
+                total_inscr = df_stats["Nombre d'ateliers"].sum()
+                nb_at_proposes = ats_count.count if ats_count.count else 0
+                
+                st.markdown(f"**Total des inscriptions sur la période :** {total_inscr}")
+                st.markdown(f"**Nombre d'ateliers proposés sur la période :** {nb_at_proposes}")
+                
+                # Exports
+                ce_s1, ce_s2 = st.columns(2)
+                ce_s1.download_button("📥 Excel Statistiques", data=export_to_excel(df_stats), file_name=f"stats_am_{ds_stat}_{de_stat}.xlsx")
+                pdf_stat_lines = [f"{r['Assistante Maternelle']} : {r['Nombre d\'ateliers']} ateliers" for _, r in df_stats.iterrows()]
+                pdf_stat_lines.append(f"\nTotal inscriptions : {total_inscr}")
+                pdf_stat_lines.append(f"Ateliers proposés : {nb_at_proposes}")
+                ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques Participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
+            else:
+                st.info("Aucune donnée pour cette période.")
 
         with t4: # PLANNING ATELIERS (ADMIN)
             c1_adm, c2_adm = st.columns(2)
