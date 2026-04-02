@@ -425,29 +425,37 @@ elif menu == "🔐 Administration":
         with t8: # 📜 JOURNAL DES ACTIONS
             st.subheader("📜 Journal des manipulations")
             cj1, cj2 = st.columns(2)
-            dj_s = cj1.date_input("Depuis le", date.today() - timedelta(days=7), format="DD/MM/YYYY")
-            dj_e = cj2.date_input("Jusqu'au", date.today(), format="DD/MM/YYYY")
+            dj_s = cj1.date_input("Depuis le", date.today() - timedelta(days=7), format="DD/MM/YYYY", key="log_input_d1")
+            dj_e = cj2.date_input("Jusqu'au", date.today(), format="DD/MM/YYYY", key="log_input_d2")
             
-            # Récupération des logs avec tri chronologique (plus ancien au plus récent)
-            res_logs = supabase.table("logs").select("*").gte("created_at", str(dj_s)).lte("created_at", str(dj_e) + "T23:59:59").order("created_at", ascending=True).execute()
-            
-            if res_logs.data:
-                logs_df = pd.DataFrame(res_logs.data)
-                # Formatage de la date pour l'affichage
-                logs_df['created_at'] = pd.to_datetime(logs_df['created_at']).dt.strftime('%d/%m/%Y %H:%M')
+            try:
+                # Tentative de récupération des données
+                res_logs = supabase.table("logs").select("*").gte("created_at", str(dj_s)).lte("created_at", str(dj_e) + "T23:59:59").order("created_at", ascending=True).execute()
                 
-                st.dataframe(
-                    logs_df[['created_at', 'utilisateur', 'action', 'details']],
-                    column_config={
-                        "created_at": "Date & Heure",
-                        "utilisateur": "Auteur",
-                        "action": "Action",
-                        "details": "Détails de la manipulation"
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info("Aucune activité enregistrée sur cette période.")
+                # Vérification si des données existent
+                if hasattr(res_logs, 'data') and res_logs.data:
+                    logs_df = pd.DataFrame(res_logs.data)
+                    
+                    # Nettoyage et formatage de la date pour l'affichage
+                    logs_df['created_at'] = pd.to_datetime(logs_df['created_at']).dt.strftime('%d/%m/%Y %H:%M')
+                    
+                    # Affichage du tableau
+                    st.dataframe(
+                        logs_df[['created_at', 'utilisateur', 'action', 'details']],
+                        column_config={
+                            "created_at": "Date & Heure",
+                            "utilisateur": "Auteur",
+                            "action": "Action",
+                            "details": "Détails de la manipulation"
+                        },
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("Le journal est vide. Les actions apparaîtront ici dès que des utilisateurs feront des inscriptions ou désinscriptions.")
+            
+            except Exception as e:
+                # Si la table est vide ou inaccessible, on affiche un message neutre au lieu d'une erreur rouge
+                st.info("Le journal des actions est en cours d'initialisation ou aucune donnée n'est disponible pour cette période.")
 
     else: st.info("Saisissez le code secret pour accéder à l'administration.")
