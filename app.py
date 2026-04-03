@@ -590,7 +590,7 @@ elif menu == "🔐 Administration":
                                 "Lieu": lieu_val, 
                                 "Horaire": horaire_val, 
                                 "Capacité": capa, 
-                                "Actif": True, 
+                                "Actif": False,   # ← MODIFICATION : par défaut inactif
                                 "Verrouillé": False
                             })
                         curr += timedelta(days=1)
@@ -604,7 +604,7 @@ elif menu == "🔐 Administration":
                         column_config={
                             "Lieu": st.column_config.SelectboxColumn(options=l_list, required=False),
                             "Horaire": st.column_config.SelectboxColumn(options=h_list, required=False),
-                            "Actif": st.column_config.CheckboxColumn(default=True),
+                            "Actif": st.column_config.CheckboxColumn(default=False),  # ← MODIFICATION : décoché par défaut
                             "Verrouillé": st.column_config.CheckboxColumn(default=False, help="Si coché, seul l'admin peut gérer les inscriptions")
                         },
                         use_container_width=True,
