@@ -12,17 +12,6 @@ from fpdf import FPDF
 # ==========================================
 st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
 
-# --- TITRE DE L'APPLICATION ---
-st.markdown("""
-    <div style="display: flex; align-items: center; background-color: #fdf2e9; padding: 20px; border-radius: 15px; margin-bottom: 25px; border: 2px solid #ff9800;">
-        <div style="font-size: 3.5rem; margin-right: 20px;">🎨</div>
-        <div>
-            <h1 style="color: #e65100; margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 2.8rem;">Résa RPE</h1>
-            <p style="margin: 0; color: #d35400; font-weight: bold; font-size: 1.1rem;">Ateliers d'éveil & Activités manuelles</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
 # --- CONNEXION SUPABASE ---
 url = st.secrets["supabase_url"]
 key = st.secrets["supabase_key"]
