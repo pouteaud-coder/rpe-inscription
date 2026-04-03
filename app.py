@@ -90,7 +90,7 @@ def parse_date_fr_to_iso(date_str):
 
 def is_verrouille(at):
     """Retourne True si l'atelier est verrouillé (colonne 'verrouille')"""
-    return bool(at.get('verrouille', False))
+    return bool(at.get("Verrouille", at.get("verrouille", False)))
 
 # --- FONCTIONS D'EXPORT ---
 def export_to_excel(df):
@@ -367,7 +367,7 @@ elif menu == "🔐 Administration":
                                 "horaire_id": map_h_id[r['Horaire']],
                                 "capacite_max": int(r['Capacité']),
                                 "est_actif": bool(r['Actif']),
-                                "verrouille": bool(r.get('Verrouillé', False))
+                                "Verrouille": bool(r.get("Verrouillé", False))
                             })
                         if to_db: supabase.table("ateliers").insert(to_db).execute(); st.session_state['at_list_gen'] = []; st.rerun()
 
@@ -390,7 +390,7 @@ elif menu == "🔐 Administration":
                     btn_v = "🔓 Déverrouiller" if is_verrouille(a) else "🔒 Verrouiller"
                     if cc.button(btn_v, key=f"at_verr_{a['id']}"):
                         nouvel_etat = not is_verrouille(a)
-                        supabase.table("ateliers").update({"verrouille": nouvel_etat}).eq("id", a['id']).execute()
+                        supabase.table("ateliers").update({"Verrouille": bool(nouvel_etat)}).eq("id", a['id']).execute()
                         etat_str = "verrouillé" if nouvel_etat else "déverrouillé"
                         enregistrer_log("Admin", "Verrouillage atelier", f"Atelier '{a['titre']}' du {a['date_atelier']} {etat_str}")
                         st.rerun()
