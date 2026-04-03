@@ -289,7 +289,6 @@ def super_admin_dialog():
             st.rerun()
         else: st.error("Code incorrect")
 
-# --- NOUVEAU DIALOGUE : MODIFICATION D'ATELIER ---
 @st.dialog("✏️ Modifier l'atelier")
 def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, capacite_actuelle, lieux_list, horaires_list, map_lieu_id, map_horaire_id):
     """Dialogue de modification d'un atelier (titre, lieu, horaire, capacité)"""
@@ -555,16 +554,34 @@ elif menu == "🔐 Administration":
                     if st.button("💾 Enregistrer"):
                         to_db = []
                         for _, r in df_ed.iterrows():
+                            # Vérification que les IDs existent
+                            lieu_nom = r['Lieu']
+                            horaire_lib = r['Horaire']
+                            if lieu_nom not in map_l_id:
+                                st.error(f"Lieu '{lieu_nom}' introuvable. Annulation.")
+                                st.stop()
+                            if horaire_lib not in map_h_id:
+                                st.error(f"Horaire '{horaire_lib}' introuvable. Annulation.")
+                                st.stop()
                             to_db.append({
                                 "date_atelier": parse_date_fr_to_iso(r['Date']),
                                 "titre": r['Titre'],
-                                "lieu_id": map_l_id[r['Lieu']],
-                                "horaire_id": map_h_id[r['Horaire']],
+                                "lieu_id": map_l_id[lieu_nom],
+                                "horaire_id": map_h_id[horaire_lib],
                                 "capacite_max": int(r['Capacité']),
                                 "est_actif": bool(r['Actif']),
                                 "Verrouille": bool(r.get("Verrouillé", False))
                             })
-                        if to_db: supabase.table("ateliers").insert(to_db).execute(); st.session_state['at_list_gen'] = []; st.rerun()
+                        if to_db:
+                            try:
+                                supabase.table("ateliers").insert(to_db).execute()
+                                st.session_state['at_list_gen'] = []
+                                st.success(f"{len(to_db)} ateliers enregistrés avec succès !")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur lors de l'enregistrement : {str(e)}")
+                        else:
+                            st.warning("Aucune ligne à enregistrer.")
 
             elif sub == "Répertoire":
                 cf1, cf2, cf3 = st.columns(3)
@@ -576,7 +593,6 @@ elif menu == "🔐 Administration":
                     if ft == "Actifs" and not a['est_actif']: continue
                     if ft == "Inactifs" and a['est_actif']: continue
                     verrou_icon = " 🔒" if is_verrouille(a) else ""
-                    # Colonnes : affichage + boutons Désactiver, Verrouiller, Modifier, Supprimer
                     ca, cb, cc, cd, ce = st.columns([0.5, 0.12, 0.12, 0.12, 0.14])
                     ca.write(f"**{format_date_fr_complete(a['date_atelier'])}** | {a['horaires']['libelle']} | {a['titre']} ({a['lieux']['nom']}){verrou_icon}")
                     btn_l = "🔴 Désactiver" if a['est_actif'] else "🟢 Activer"
@@ -589,7 +605,6 @@ elif menu == "🔐 Administration":
                         etat_str = "verrouillé" if nouvel_etat else "déverrouillé"
                         enregistrer_log("Admin", "Verrouillage atelier", f"Atelier '{a['titre']}' du {a['date_atelier']} {etat_str}")
                         st.rerun()
-                    # Bouton Modifier
                     if cd.button("✏️", key=f"at_edit_{a['id']}"):
                         edit_atelier_dialog(a['id'], a['titre'], a['lieu_id'], a['horaire_id'], a['capacite_max'], l_raw, h_raw, map_l_id, map_h_id)
                     if ce.button("🗑️", key=f"at_del_{a['id']}"):
@@ -826,3 +841,4 @@ elif menu == "🔐 Administration":
 
     else:
         st.info("Saisissez le code secret pour accéder aux fonctions d'administration.")
+        
