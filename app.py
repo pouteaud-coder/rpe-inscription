@@ -100,14 +100,49 @@ def format_date_fr_simple(date_str):
         return str(date_str)
 
 def parse_date_fr_to_iso(date_str):
+    """
+    Convertit une date au format français (Lundi 18 juin 2026) ou au format court (18/06/2026)
+    ou au format ISO (2026-06-18) vers ISO YYYY-MM-DD.
+    """
+    # Nettoyage : suppression des éventuels ** et des espaces
     clean = str(date_str).replace("**", "").strip()
+    if not clean:
+        return None
+    
+    # Essai ISO déjà
+    try:
+        d = datetime.strptime(clean, '%Y-%m-%d')
+        return d.strftime('%Y-%m-%d')
+    except:
+        pass
+    
+    # Essai format français avec jour de la semaine et mois en toutes lettres
     parts = clean.split(" ")
-    if len(parts) < 4: return date_str
-    d, m_str, y = parts[1], parts[2].lower(), parts[3]
-    months = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
-    try: m = months.index(m_str) + 1
-    except: m = 1
-    return f"{y}-{m:02d}-{int(d):02d}"
+    if len(parts) >= 4:
+        # On ignore le jour de la semaine (premier mot)
+        jour = parts[1]
+        mois_texte = parts[2].lower()
+        annee = parts[3]
+        mois_numerique = ["janvier", "février", "mars", "avril", "mai", "juin", 
+                          "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+        if mois_texte in mois_numerique:
+            m = mois_numerique.index(mois_texte) + 1
+            try:
+                return f"{annee}-{m:02d}-{int(jour):02d}"
+            except:
+                pass
+    
+    # Essai format court JJ/MM/AAAA ou JJ-MM-AAAA
+    try:
+        for sep in ['/', '-']:
+            if sep in clean:
+                j, m, a = clean.split(sep)
+                return f"{int(a):04d}-{int(m):02d}-{int(j):02d}"
+    except:
+        pass
+    
+    # Dernier recours : retourner la chaîne brute (provoquera une erreur plus tard)
+    return clean
 
 def is_verrouille(at):
     """Retourne True si l'atelier est verrouillé"""
@@ -525,26 +560,52 @@ elif menu == "🔐 Administration":
             sub = st.radio("Mode", ["Générateur", "Répertoire", "Actions groupées"], horizontal=True)
 
             if sub == "Générateur":
+                # --- Sélection du lieu et horaire par défaut avant génération ---
+                col_lieu, col_horaire = st.columns(2)
+                with col_lieu:
+                    lieu_par_defaut = st.selectbox("Lieu par défaut pour les nouvelles lignes :", 
+                                                   options=[""] + l_list, 
+                                                   help="Choisissez un lieu qui sera prérempli dans chaque ligne générée. Si vide, le champ sera laissé vide.")
+                with col_horaire:
+                    horaire_par_defaut = st.selectbox("Horaire par défaut pour les nouvelles lignes :", 
+                                                      options=[""] + h_list,
+                                                      help="Choisissez un horaire qui sera prérempli dans chaque ligne générée. Si vide, le champ sera laissé vide.")
+                
                 c1, c2 = st.columns(2)
                 d1 = c1.date_input("Début", date.today(), format="DD/MM/YYYY", key="gen_d1")
                 d2 = c2.date_input("Fin", date.today() + timedelta(days=7), format="DD/MM/YYYY", key="gen_d2")
                 jours = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
+                
                 if st.button("📊 Générer les lignes"):
                     tmp, curr = [], d1
                     while curr <= d2:
                         js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                         if js_fr[curr.weekday()] in jours:
-                            loc = l_list[0] if l_list else ""
-                            tmp.append({"Date": format_date_fr_complete(curr, False), "Titre": "", "Lieu": loc, "Horaire": h_list[0] if h_list else "", "Capacité": map_l_cap.get(loc, 10), "Actif": True, "Verrouillé": False})
+                            # Utiliser le lieu et horaire sélectionnés, ou laisser vide
+                            lieu_val = lieu_par_defaut if lieu_par_defaut else ""
+                            horaire_val = horaire_par_defaut if horaire_par_defaut else ""
+                            # La capacité par défaut est celle du lieu choisi, sinon 10
+                            capa = map_l_cap.get(lieu_val, 10) if lieu_val else 10
+                            tmp.append({
+                                "Date": format_date_fr_complete(curr, False), 
+                                "Titre": "", 
+                                "Lieu": lieu_val, 
+                                "Horaire": horaire_val, 
+                                "Capacité": capa, 
+                                "Actif": True, 
+                                "Verrouillé": False
+                            })
                         curr += timedelta(days=1)
                     st.session_state['at_list_gen'] = tmp
+                    st.rerun()
+                    
                 if st.session_state['at_list_gen']:
                     df_ed = st.data_editor(
                         pd.DataFrame(st.session_state['at_list_gen']),
                         num_rows="dynamic",
                         column_config={
-                            "Lieu": st.column_config.SelectboxColumn(options=l_list, required=True),
-                            "Horaire": st.column_config.SelectboxColumn(options=h_list, required=True),
+                            "Lieu": st.column_config.SelectboxColumn(options=l_list, required=False),
+                            "Horaire": st.column_config.SelectboxColumn(options=h_list, required=False),
                             "Actif": st.column_config.CheckboxColumn(default=True),
                             "Verrouillé": st.column_config.CheckboxColumn(default=False, help="Si coché, seul l'admin peut gérer les inscriptions")
                         },
@@ -554,17 +615,24 @@ elif menu == "🔐 Administration":
                     if st.button("💾 Enregistrer"):
                         to_db = []
                         for _, r in df_ed.iterrows():
-                            # Vérification que les IDs existent
                             lieu_nom = r['Lieu']
                             horaire_lib = r['Horaire']
+                            # Vérification : si le lieu ou l'horaire est vide, on ignore cette ligne
+                            if not lieu_nom or not horaire_lib:
+                                st.warning(f"Ligne ignorée : lieu ou horaire manquant pour la date {r['Date']}")
+                                continue
                             if lieu_nom not in map_l_id:
                                 st.error(f"Lieu '{lieu_nom}' introuvable. Annulation.")
                                 st.stop()
                             if horaire_lib not in map_h_id:
                                 st.error(f"Horaire '{horaire_lib}' introuvable. Annulation.")
                                 st.stop()
+                            date_iso = parse_date_fr_to_iso(r['Date'])
+                            if not date_iso:
+                                st.error(f"Format de date invalide : {r['Date']}")
+                                st.stop()
                             to_db.append({
-                                "date_atelier": parse_date_fr_to_iso(r['Date']),
+                                "date_atelier": date_iso,
                                 "titre": r['Titre'],
                                 "lieu_id": map_l_id[lieu_nom],
                                 "horaire_id": map_h_id[horaire_lib],
@@ -581,7 +649,7 @@ elif menu == "🔐 Administration":
                             except Exception as e:
                                 st.error(f"Erreur lors de l'enregistrement : {str(e)}")
                         else:
-                            st.warning("Aucune ligne à enregistrer.")
+                            st.warning("Aucune ligne valide à enregistrer (lieu ou horaire manquant).")
 
             elif sub == "Répertoire":
                 cf1, cf2, cf3 = st.columns(3)
@@ -841,4 +909,3 @@ elif menu == "🔐 Administration":
 
     else:
         st.info("Saisissez le code secret pour accéder aux fonctions d'administration.")
-        
