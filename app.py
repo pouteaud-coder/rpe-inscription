@@ -78,6 +78,16 @@ def format_date_fr_complete(date_obj, gras=True):
     res = f"{jours[date_obj.weekday()]} {date_obj.day} {mois[date_obj.month-1]} {date_obj.year}"
     return f"**{res}**" if gras else res
 
+def format_date_fr_simple(date_str):
+    """Retourne une date ISO en texte français sans astérisques, ex: Lundi 3 avril 2026"""
+    jours = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+    mois = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+    try:
+        d = datetime.strptime(str(date_str), '%Y-%m-%d')
+        return f"{jours[d.weekday()]} {d.day} {mois[d.month-1]} {d.year}"
+    except:
+        return str(date_str)
+
 def parse_date_fr_to_iso(date_str):
     clean = str(date_str).replace("**", "").strip()
     parts = clean.split(" ")
@@ -89,8 +99,16 @@ def parse_date_fr_to_iso(date_str):
     return f"{y}-{m:02d}-{int(d):02d}"
 
 def is_verrouille(at):
-    """Retourne True si l'atelier est verrouillé (colonne 'verrouille')"""
+    """Retourne True si l'atelier est verrouillé"""
     return bool(at.get("Verrouille", at.get("verrouille", False)))
+
+def trier_par_nom_puis_date(data):
+    """Trie une liste d'inscriptions par nom alphabétique puis date croissante"""
+    return sorted(data, key=lambda i: (
+        i['adherents']['nom'].upper(),
+        i['adherents']['prenom'].upper(),
+        i['ateliers']['date_atelier']
+    ))
 
 # --- FONCTIONS D'EXPORT ---
 def export_to_excel(df):
@@ -100,6 +118,7 @@ def export_to_excel(df):
     return output.getvalue()
 
 def export_to_pdf(title, data_list):
+    """Export PDF simple (liste de lignes texte) — utilisé pour planning et stats"""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
@@ -108,6 +127,94 @@ def export_to_pdf(title, data_list):
     pdf.set_font("Arial", size=11)
     for line in data_list:
         pdf.multi_cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'))
+    return pdf.output(dest='S').encode('latin-1')
+
+def export_suivi_am_pdf(title, data_triee):
+    """
+    Export PDF du suivi AM avec mise en forme fidèle à l'écran :
+    - En-tête vert par AM (nom en gras)
+    - Pour chaque atelier : date en français, titre, lieu, horaire, nb enfants
+    """
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
+    pdf.ln(6)
+
+    curr_am = ""
+    for i in data_triee:
+        nom_am = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
+        at = i['ateliers']
+        date_fr = format_date_fr_simple(at['date_atelier'])
+        titre_at = at.get('titre', '')
+        lieu = at['lieux']['nom']
+        horaire = at['horaires']['libelle']
+        nb_enf = i['nb_enfants']
+
+        # En-tête AM (fond vert, texte blanc)
+        if nom_am != curr_am:
+            pdf.ln(3)
+            pdf.set_fill_color(27, 94, 32)   # vert foncé #1b5e20
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 9, f"  {nom_am}".encode('latin-1', 'replace').decode('latin-1'), ln=True, fill=True)
+            pdf.set_text_color(0, 0, 0)
+            curr_am = nom_am
+
+        # Ligne atelier
+        pdf.set_font("Arial", 'B', 10)
+        ligne_date = f"  {date_fr}".encode('latin-1', 'replace').decode('latin-1')
+        pdf.cell(0, 6, ligne_date, ln=True)
+
+        pdf.set_font("Arial", size=10)
+        detail = f"     {titre_at}  |  {lieu}  |  {horaire}  |  {nb_enf} enfant(s)"
+        pdf.cell(0, 6, detail.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+
+    return pdf.output(dest='S').encode('latin-1')
+
+def export_planning_ateliers_pdf(title, ateliers_data, get_inscrits_fn):
+    """
+    Export PDF du planning des ateliers avec mise en forme fidèle à l'écran :
+    - En-tête par atelier : date, lieu, horaire, compteurs
+    - Liste des inscrits en dessous
+    """
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
+    pdf.ln(6)
+
+    for a in ateliers_data:
+        ins_at = get_inscrits_fn(a['id'])
+        t_ad = len(ins_at)
+        t_en = sum([p['nb_enfants'] for p in ins_at])
+        restantes = a['capacite_max'] - (t_ad + t_en)
+        date_fr = format_date_fr_simple(a['date_atelier'])
+        lieu = a['lieux']['nom']
+        horaire = a['horaires']['libelle']
+        titre_at = a.get('titre', '')
+        verrou = " [VERROUILLE]" if is_verrouille(a) else ""
+
+        # En-tête atelier (fond bleu-gris)
+        pdf.set_fill_color(224, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Arial", 'B', 11)
+        entete = f"  {date_fr} | {titre_at}{verrou}"
+        pdf.cell(0, 8, entete.encode('latin-1', 'replace').decode('latin-1'), ln=True, fill=True)
+
+        pdf.set_font("Arial", size=10)
+        sous = f"     Lieu : {lieu}  |  Horaire : {horaire}  |  AM : {t_ad}  |  Enfants : {t_en}  |  Places restantes : {restantes}"
+        pdf.cell(0, 6, sous.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+
+        # Inscrits triés alphabétiquement
+        ins_tries = sorted(ins_at, key=lambda x: (x['adherents']['nom'].upper(), x['adherents']['prenom'].upper()))
+        for p in ins_tries:
+            nom_p = f"{p['adherents']['prenom']} {p['adherents']['nom']}"
+            ligne = f"       • {nom_p}  ({p['nb_enfants']} enfant(s))"
+            pdf.cell(0, 6, ligne.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+
+        pdf.ln(3)
+
     return pdf.output(dest='S').encode('latin-1')
 
 # --- DIALOGUES ---
@@ -188,12 +295,10 @@ if menu == "📝 Inscriptions":
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"
 
-            # Badge verrouillé dans le titre
-            verrou_badge = " 🔒 <span class='badge-verrouille'>Inscription sur inscription uniquement par l'admin</span>" if is_verrouille(at) else ""
+            verrou_badge = " 🔒 <span class='badge-verrouille'>Inscription uniquement par l'admin</span>" if is_verrouille(at) else ""
             titre_label = f"{format_date_fr_complete(at['date_atelier'])} — {at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
 
             with st.expander(titre_label):
-                # Avertissement si verrouillé
                 if is_verrouille(at):
                     st.warning("🔒 Cet atelier est géré par l'administration. Les inscriptions et désinscriptions ne sont pas disponibles ici.")
 
@@ -201,7 +306,6 @@ if menu == "📝 Inscriptions":
                     for i in res_ins.data:
                         n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
                         if is_verrouille(at):
-                            # Atelier verrouillé : affichage seul, pas de bouton de désinscription
                             st.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
                         else:
                             c_nom, c_poub = st.columns([0.88, 0.12])
@@ -209,7 +313,6 @@ if menu == "📝 Inscriptions":
                             if c_poub.button("🗑️", key=f"del_{i['id']}"):
                                 confirm_unsubscribe_dialog(i['id'], n_f, at_info_log, user_principal)
 
-                # Formulaire d'inscription : masqué si verrouillé
                 if not is_verrouille(at):
                     st.markdown("---")
                     try: idx_def = (liste_adh.index(user_principal) + 1)
@@ -245,23 +348,30 @@ elif menu == "📊 Suivi & Récap":
     with t1:
         choix = st.multiselect("Filtrer par assistante maternelle :", liste_adh, key="pub_filter_am")
         ids = [dict_adh[n] for n in choix] if choix else list(dict_adh.values())
-        data = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids).eq("ateliers.est_actif", True).order("adherent_id").execute()
+        data = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids).eq("ateliers.est_actif", True).execute()
 
         if data.data:
+            # --- TRI : alphabétique sur nom, puis date croissante ---
+            data_triee = trier_par_nom_puis_date(data.data)
+
+            # Export Excel
             df_export = pd.DataFrame([{
                 "Assistante Maternelle": f"{i['adherents']['prenom']} {i['adherents']['nom']}",
                 "Date": i['ateliers']['date_atelier'],
                 "Atelier": i['ateliers']['titre'],
                 "Lieu": i['ateliers']['lieux']['nom'],
+                "Horaire": i['ateliers']['horaires']['libelle'],
                 "Nb Enfants": i['nb_enfants']
-            } for i in data.data])
+            } for i in data_triee])
+
             c_e1, c_e2 = st.columns(2)
             c_e1.download_button("📥 Excel", data=export_to_excel(df_export), file_name="suivi_am.xlsx")
-            pdf_lines = [f"{row['Assistante Maternelle']} - {row['Date']} - {row['Atelier']} ({row['Nb Enfants']} enf.)" for _, row in df_export.iterrows()]
-            c_e2.download_button("📥 PDF", data=export_to_pdf("Suivi par AM", pdf_lines), file_name="suivi_am.pdf")
+            # Export PDF mis en forme
+            c_e2.download_button("📥 PDF", data=export_suivi_am_pdf("Suivi par Assistante Maternelle", data_triee), file_name="suivi_am.pdf")
 
+            # Affichage écran
             curr_u = ""
-            for i in data.data:
+            for i in data_triee:
                 nom_u = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
                 if nom_u != curr_u:
                     st.markdown(f'<div style="color:#1b5e20; border-bottom:2px solid #1b5e20; padding-top:15px; margin-bottom:8px; font-weight:bold; font-size:1.2rem;">{nom_u}</div>', unsafe_allow_html=True)
@@ -277,12 +387,16 @@ elif menu == "📊 Suivi & Récap":
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s)).lte("date_atelier", str(d_e)).order("date_atelier").execute()
 
         if ats_raw.data:
+            # Pré-chargement de tous les inscrits pour export
+            cache_ins = {}
             all_ins_data = []
             for a in ats_raw.data:
                 ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
+                cache_ins[a['id']] = ins_at.data
                 for p in ins_at.data:
                     all_ins_data.append({
-                        "Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'], "Horaire": a['horaires']['libelle'],
+                        "Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'],
+                        "Horaire": a['horaires']['libelle'],
                         "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']
                     })
 
@@ -290,18 +404,20 @@ elif menu == "📊 Suivi & Récap":
                 df_at_exp = pd.DataFrame(all_ins_data)
                 ce1, ce2 = st.columns(2)
                 ce1.download_button("📥 Excel Planning", data=export_to_excel(df_at_exp), file_name="planning_ateliers.xlsx", key="exp_at_xl")
-                pdf_at_lines = [f"{r['Date']} | {r['Atelier']} ({r['Lieu']}) | AM: {r['AM']} ({r['Enfants']} enf.)" for r in all_ins_data]
-                ce2.download_button("📥 PDF Planning", data=export_to_pdf("Planning Ateliers", pdf_at_lines), file_name="planning_ateliers.pdf", key="exp_at_pdf")
+                # PDF mis en forme planning par atelier
+                ce2.download_button("📥 PDF Planning", data=export_planning_ateliers_pdf(
+                    "Planning des Ateliers", ats_raw.data, lambda aid: cache_ins.get(aid, [])
+                ), file_name="planning_ateliers.pdf", key="exp_at_pdf")
 
             for index, a in enumerate(ats_raw.data):
                 c_l = get_color(a['lieux']['nom'])
-                ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
-                t_ad, t_en = len(ins_at.data), sum([p['nb_enfants'] for p in ins_at.data])
+                ins_at = cache_ins.get(a['id'], [])
+                t_ad, t_en = len(ins_at), sum([p['nb_enfants'] for p in ins_at])
                 restantes = a['capacite_max'] - (t_ad + t_en)
                 cl_c = "alerte-complet" if restantes <= 0 else ""
                 st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span> <span class='compteur-badge'>👤 {t_ad} AM</span> <span class='compteur-badge'>👶 {t_en} enf.</span> <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>", unsafe_allow_html=True)
-                if ins_at.data:
-                    ins_s = sorted(ins_at.data, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
+                if ins_at:
+                    ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
                     html = "<div class='container-inscrits'>"
                     for p in ins_s: html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
                     st.markdown(html + "</div>", unsafe_allow_html=True)
@@ -386,7 +502,6 @@ elif menu == "🔐 Administration":
                     btn_l = "🔴 Désactiver" if a['est_actif'] else "🟢 Activer"
                     if cb.button(btn_l, key=f"at_stat_{a['id']}"):
                         supabase.table("ateliers").update({"est_actif": not a['est_actif']}).eq("id", a['id']).execute(); st.rerun()
-                    # Bouton verrouillage
                     btn_v = "🔓 Déverrouiller" if is_verrouille(a) else "🔒 Verrouiller"
                     if cc.button(btn_v, key=f"at_verr_{a['id']}"):
                         nouvel_etat = not is_verrouille(a)
@@ -410,44 +525,66 @@ elif menu == "🔐 Administration":
         with t2: # SUIVI AM (Admin)
             choix_adm = st.multiselect("Filtrer par AM (Admin) :", liste_adh, key="adm_filter_am")
             ids_adm = [dict_adh[n] for n in choix_adm] if choix_adm else list(dict_adh.values())
-            data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).order("adherent_id").execute()
+            data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).execute()
+
             if data_adm.data:
-                df_adm = pd.DataFrame([{"AM": f"{i['adherents']['prenom']} {i['adherents']['nom']}", "Date": i['ateliers']['date_atelier'], "Atelier": i['ateliers']['titre'], "Lieu": i['ateliers']['lieux']['nom'], "Enfants": i['nb_enfants']} for i in data_adm.data])
+                # --- TRI : alphabétique sur nom, puis date croissante ---
+                data_adm_triee = trier_par_nom_puis_date(data_adm.data)
+
+                df_adm = pd.DataFrame([{
+                    "AM": f"{i['adherents']['prenom']} {i['adherents']['nom']}",
+                    "Date": i['ateliers']['date_atelier'],
+                    "Atelier": i['ateliers']['titre'],
+                    "Lieu": i['ateliers']['lieux']['nom'],
+                    "Horaire": i['ateliers']['horaires']['libelle'],
+                    "Enfants": i['nb_enfants']
+                } for i in data_adm_triee])
+
                 c_e3, c_e4 = st.columns(2)
                 c_e3.download_button("📥 Excel (Admin)", data=export_to_excel(df_adm), file_name="admin_suivi_am.xlsx")
-                pdf_lines_adm = [f"{r['AM']} - {r['Date']} - {r['Atelier']} ({r['Enfants']} enf.)" for _, r in df_adm.iterrows()]
-                c_e4.download_button("📥 PDF (Admin)", data=export_to_pdf("Suivi Admin AM", pdf_lines_adm), file_name="admin_suivi_am.pdf")
+                # PDF mis en forme
+                c_e4.download_button("📥 PDF (Admin)", data=export_suivi_am_pdf("Suivi AM (Administration)", data_adm_triee), file_name="admin_suivi_am.pdf")
+
                 curr = ""
-                for i in data_adm.data:
+                for i in data_adm_triee:
                     nom = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
-                    if nom != curr: st.markdown(f'<div style="color:#1b5e20; border-bottom:2px solid #1b5e20; padding-top:15px; margin-bottom:8px; font-weight:bold; font-size:1.2rem;">{nom}</div>', unsafe_allow_html=True); curr = nom
+                    if nom != curr:
+                        st.markdown(f'<div style="color:#1b5e20; border-bottom:2px solid #1b5e20; padding-top:15px; margin-bottom:8px; font-weight:bold; font-size:1.2rem;">{nom}</div>', unsafe_allow_html=True)
+                        curr = nom
                     at = i['ateliers']
                     c_l = get_color(at['lieux']['nom'])
                     st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
 
-        with t3: # PLANNING ATELIERS (Admin) — avec gestion inscriptions pour ateliers verrouillés
+        with t3: # PLANNING ATELIERS (Admin)
             st.subheader("📅 Planning des Ateliers")
             c1_adm, c2_adm = st.columns(2)
             d_s_a = c1_adm.date_input("Du", date.today(), key="adm_plan_d1", format="DD/MM/YYYY")
             d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=30), key="adm_plan_d2", format="DD/MM/YYYY")
             ats_adm = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a)).order("date_atelier").execute()
+
             if ats_adm.data:
+                # Pré-chargement des inscrits pour éviter les doubles requêtes
+                cache_ins_adm = {}
                 adm_ins_list = []
                 for a in ats_adm.data:
                     ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
+                    cache_ins_adm[a['id']] = ins_at.data
                     for p in ins_at.data:
                         adm_ins_list.append({"Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'], "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']})
+
                 if adm_ins_list:
                     df_adm_at = pd.DataFrame(adm_ins_list)
                     cea1, cea2 = st.columns(2)
                     cea1.download_button("📥 Excel Planning (Admin)", data=export_to_excel(df_adm_at), file_name="admin_planning_ateliers.xlsx", key="adm_exp_xl")
-                    pdf_adm_at = [f"{r['Date']} | {r['Atelier']} | {r['AM']} ({r['Enfants']} enf.)" for r in adm_ins_list]
-                    cea2.download_button("📥 PDF Planning (Admin)", data=export_to_pdf("Planning Ateliers (Admin)", pdf_adm_at), file_name="admin_planning_ateliers.pdf", key="adm_exp_pdf")
+                    # PDF mis en forme planning
+                    cea2.download_button("📥 PDF Planning (Admin)", data=export_planning_ateliers_pdf(
+                        "Planning des Ateliers (Administration)", ats_adm.data, lambda aid: cache_ins_adm.get(aid, [])
+                    ), file_name="admin_planning_ateliers.pdf", key="adm_exp_pdf")
 
                 for index, a in enumerate(ats_adm.data):
                     c_l = get_color(a['lieux']['nom'])
-                    ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
-                    t_ad, t_en = len(ins_at.data), sum([p['nb_enfants'] for p in ins_at.data])
+                    ins_at = cache_ins_adm.get(a['id'], [])
+                    t_ad, t_en = len(ins_at), sum([p['nb_enfants'] for p in ins_at])
                     restantes = a['capacite_max'] - (t_ad + t_en)
                     cl_c = "alerte-complet" if restantes <= 0 else ""
                     verrou_icon = " 🔒" if is_verrouille(a) else ""
@@ -455,9 +592,8 @@ elif menu == "🔐 Administration":
 
                     st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span>{verrou_icon} <span class='compteur-badge'>👤 {t_ad} AM</span> <span class='compteur-badge'>👶 {t_en} enf.</span> <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>", unsafe_allow_html=True)
 
-                    # Liste des inscrits avec possibilité de désinscrire et modifier nb enfants (admin)
-                    if ins_at.data:
-                        ins_s = sorted(ins_at.data, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
+                    if ins_at:
+                        ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
                         for p in ins_s:
                             n_f = f"{p['adherents']['prenom']} {p['adherents']['nom']}"
                             cp1, cp2, cp3, cp4 = st.columns([0.45, 0.2, 0.2, 0.15])
@@ -470,7 +606,6 @@ elif menu == "🔐 Administration":
                             if cp4.button("🗑️", key=f"adm_del_plan_{p['id']}"):
                                 confirm_unsubscribe_dialog(p['id'], n_f, at_info_log, "Admin")
 
-                    # Formulaire d'inscription admin (disponible pour tous les ateliers, y compris verrouillés)
                     with st.expander(f"➕ Inscrire une AM à cet atelier", expanded=False):
                         ca1, ca2, ca3 = st.columns([2, 1, 1])
                         qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
@@ -478,7 +613,7 @@ elif menu == "🔐 Administration":
                         if ca3.button("✅ Inscrire", key=f"adm_ins_{a['id']}", type="primary"):
                             if qui_adm != "Choisir...":
                                 id_adh = dict_adh[qui_adm]
-                                existing = next((ins for ins in ins_at.data if ins['adherent_id'] == id_adh), None)
+                                existing = next((ins for ins in ins_at if ins['adherent_id'] == id_adh), None)
                                 if existing:
                                     if restantes - (nb_adm - existing['nb_enfants']) < 0:
                                         st.error("Manque de places")
@@ -517,10 +652,14 @@ elif menu == "🔐 Administration":
                 st.markdown(f"**Nombre d'ateliers proposés sur la période :** {nb_at_proposes}")
                 ce_s1, ce_s2 = st.columns(2)
                 ce_s1.download_button("📥 Excel Statistiques", data=export_to_excel(df_stats), file_name=f"stats_am_{ds_stat}_{de_stat}.xlsx")
-                pdf_stat_lines = [f"{r['Assistante Maternelle']} : {r['Nombre d\'ateliers']} ateliers" for _, r in df_stats.iterrows()]
-                pdf_stat_lines.append(f"\nTotal inscriptions : {total_inscr}")
-                pdf_stat_lines.append(f"Ateliers proposés : {nb_at_proposes}")
-                ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques Participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
+                # PDF stats mis en forme : tableau + totaux
+                pdf_stat_lines = []
+                for _, r in df_stats.iterrows():
+                    pdf_stat_lines.append(f"{r['Assistante Maternelle']} : {r['Nombre d\'ateliers']} atelier(s)")
+                pdf_stat_lines.append("")
+                pdf_stat_lines.append(f"Total inscriptions sur la periode : {total_inscr}")
+                pdf_stat_lines.append(f"Ateliers proposes sur la periode : {nb_at_proposes}")
+                ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques de participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
             else: st.info("Aucune donnée pour cette période.")
 
         with t5: # 👥 LISTE AM
@@ -596,3 +735,4 @@ elif menu == "🔐 Administration":
 
     else:
         st.info("Saisissez le code secret pour accéder aux fonctions d'administration.")
+    
