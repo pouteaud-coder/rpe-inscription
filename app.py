@@ -136,8 +136,11 @@ def export_to_pdf(title, data_list):
     pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
     pdf.ln(10)
     pdf.set_font("Arial", size=11)
-    for line in data_list:
-        pdf.multi_cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'))
+    if not data_list:
+        pdf.multi_cell(0, 10, txt="Aucune donnée à exporter.")
+    else:
+        for line in data_list:
+            pdf.multi_cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'))
     return pdf.output(dest='S').encode('latin-1')
 
 def export_suivi_am_pdf(title, data_triee):
@@ -151,6 +154,11 @@ def export_suivi_am_pdf(title, data_triee):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
     pdf.ln(6)
+
+    if not data_triee:
+        pdf.set_font("Arial", size=11)
+        pdf.cell(0, 10, txt="Aucune inscription trouvée.", ln=True)
+        return pdf.output(dest='S').encode('latin-1')
 
     curr_am = ""
     for i in data_triee:
@@ -194,6 +202,11 @@ def export_planning_ateliers_pdf(title, ateliers_data, get_inscrits_fn):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
     pdf.ln(6)
+
+    if not ateliers_data:
+        pdf.set_font("Arial", size=11)
+        pdf.cell(0, 10, txt="Aucun atelier trouvé sur cette période.", ln=True)
+        return pdf.output(dest='S').encode('latin-1')
 
     for a in ateliers_data:
         ins_at = get_inscrits_fn(a['id'])
@@ -361,11 +374,11 @@ elif menu == "📊 Suivi & Récap":
         ids = [dict_adh[n] for n in choix] if choix else list(dict_adh.values())
         data = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids).eq("ateliers.est_actif", True).execute()
 
-        if data.data:
-            # --- TRI : alphabétique sur nom, puis date croissante ---
-            data_triee = trier_par_nom_puis_date(data.data)
+        # Préparation des données pour export (triées)
+        data_triee = trier_par_nom_puis_date(data.data) if data.data else []
 
-            # Export Excel
+        # Export Excel
+        if data.data:
             df_export = pd.DataFrame([{
                 "Assistante Maternelle": f"{i['adherents']['prenom']} {i['adherents']['nom']}",
                 "Date": i['ateliers']['date_atelier'],
@@ -374,13 +387,15 @@ elif menu == "📊 Suivi & Récap":
                 "Horaire": i['ateliers']['horaires']['libelle'],
                 "Nb Enfants": i['nb_enfants']
             } for i in data_triee])
+        else:
+            df_export = pd.DataFrame(columns=["Assistante Maternelle", "Date", "Atelier", "Lieu", "Horaire", "Nb Enfants"])
 
-            c_e1, c_e2 = st.columns(2)
-            c_e1.download_button("📥 Excel", data=export_to_excel(df_export), file_name="suivi_am.xlsx")
-            # Export PDF mis en forme
-            c_e2.download_button("📥 PDF", data=export_suivi_am_pdf("Suivi par Assistante Maternelle", data_triee), file_name="suivi_am.pdf")
+        c_e1, c_e2 = st.columns(2)
+        c_e1.download_button("📥 Excel", data=export_to_excel(df_export), file_name="suivi_am.xlsx")
+        c_e2.download_button("📥 PDF", data=export_suivi_am_pdf("Suivi par Assistante Maternelle", data_triee), file_name="suivi_am.pdf")
 
-            # Affichage écran
+        # Affichage écran
+        if data.data:
             curr_u = ""
             for i in data_triee:
                 nom_u = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
@@ -390,6 +405,8 @@ elif menu == "📊 Suivi & Récap":
                 at = i['ateliers']
                 c_l = get_color(at['lieux']['nom'])
                 st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+        else:
+            st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
     with t2:
         c_d1, c_d2 = st.columns(2)
@@ -397,10 +414,10 @@ elif menu == "📊 Suivi & Récap":
         d_e = c_d2.date_input("Au", d_s + timedelta(days=30), key="pub_d2", format="DD/MM/YYYY")
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s)).lte("date_atelier", str(d_e)).order("date_atelier").execute()
 
+        # Préparation des données pour export
+        all_ins_data = []
+        cache_ins = {}
         if ats_raw.data:
-            # Pré-chargement de tous les inscrits pour export
-            cache_ins = {}
-            all_ins_data = []
             for a in ats_raw.data:
                 ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
                 cache_ins[a['id']] = ins_at.data
@@ -411,15 +428,21 @@ elif menu == "📊 Suivi & Récap":
                         "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']
                     })
 
-            if all_ins_data:
-                df_at_exp = pd.DataFrame(all_ins_data)
-                ce1, ce2 = st.columns(2)
-                ce1.download_button("📥 Excel Planning", data=export_to_excel(df_at_exp), file_name="planning_ateliers.xlsx", key="exp_at_xl")
-                # PDF mis en forme planning par atelier
-                ce2.download_button("📥 PDF Planning", data=export_planning_ateliers_pdf(
-                    "Planning des Ateliers", ats_raw.data, lambda aid: cache_ins.get(aid, [])
-                ), file_name="planning_ateliers.pdf", key="exp_at_pdf")
+        # Export Excel planning (toujours disponible)
+        if all_ins_data:
+            df_at_exp = pd.DataFrame(all_ins_data)
+        else:
+            df_at_exp = pd.DataFrame(columns=["Date", "Atelier", "Lieu", "Horaire", "AM", "Enfants"])
 
+        ce1, ce2 = st.columns(2)
+        ce1.download_button("📥 Excel Planning", data=export_to_excel(df_at_exp), file_name="planning_ateliers.xlsx", key="exp_at_xl")
+        # PDF mis en forme planning par atelier (toujours disponible)
+        ce2.download_button("📥 PDF Planning", data=export_planning_ateliers_pdf(
+            "Planning des Ateliers", ats_raw.data if ats_raw.data else [], lambda aid: cache_ins.get(aid, [])
+        ), file_name="planning_ateliers.pdf", key="exp_at_pdf")
+
+        # Affichage écran
+        if ats_raw.data:
             for index, a in enumerate(ats_raw.data):
                 c_l = get_color(a['lieux']['nom'])
                 ins_at = cache_ins.get(a['id'], [])
@@ -433,6 +456,8 @@ elif menu == "📊 Suivi & Récap":
                     for p in ins_s: html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
                     st.markdown(html + "</div>", unsafe_allow_html=True)
                 if index < len(ats_raw.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
+        else:
+            st.info("Aucun atelier trouvé sur cette période.")
 
 # ==========================================
 # SECTION 🔐 ADMINISTRATION
@@ -538,10 +563,9 @@ elif menu == "🔐 Administration":
             ids_adm = [dict_adh[n] for n in choix_adm] if choix_adm else list(dict_adh.values())
             data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).execute()
 
-            if data_adm.data:
-                # --- TRI : alphabétique sur nom, puis date croissante ---
-                data_adm_triee = trier_par_nom_puis_date(data_adm.data)
+            data_adm_triee = trier_par_nom_puis_date(data_adm.data) if data_adm.data else []
 
+            if data_adm.data:
                 df_adm = pd.DataFrame([{
                     "AM": f"{i['adherents']['prenom']} {i['adherents']['nom']}",
                     "Date": i['ateliers']['date_atelier'],
@@ -550,12 +574,14 @@ elif menu == "🔐 Administration":
                     "Horaire": i['ateliers']['horaires']['libelle'],
                     "Enfants": i['nb_enfants']
                 } for i in data_adm_triee])
+            else:
+                df_adm = pd.DataFrame(columns=["AM", "Date", "Atelier", "Lieu", "Horaire", "Enfants"])
 
-                c_e3, c_e4 = st.columns(2)
-                c_e3.download_button("📥 Excel (Admin)", data=export_to_excel(df_adm), file_name="admin_suivi_am.xlsx")
-                # PDF mis en forme
-                c_e4.download_button("📥 PDF (Admin)", data=export_suivi_am_pdf("Suivi AM (Administration)", data_adm_triee), file_name="admin_suivi_am.pdf")
+            c_e3, c_e4 = st.columns(2)
+            c_e3.download_button("📥 Excel (Admin)", data=export_to_excel(df_adm), file_name="admin_suivi_am.xlsx")
+            c_e4.download_button("📥 PDF (Admin)", data=export_suivi_am_pdf("Suivi AM (Administration)", data_adm_triee), file_name="admin_suivi_am.pdf")
 
+            if data_adm.data:
                 curr = ""
                 for i in data_adm_triee:
                     nom = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
@@ -565,6 +591,8 @@ elif menu == "🔐 Administration":
                     at = i['ateliers']
                     c_l = get_color(at['lieux']['nom'])
                     st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+            else:
+                st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
         with t3: # PLANNING ATELIERS (Admin)
             st.subheader("📅 Planning des Ateliers")
@@ -573,25 +601,28 @@ elif menu == "🔐 Administration":
             d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=30), key="adm_plan_d2", format="DD/MM/YYYY")
             ats_adm = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a)).order("date_atelier").execute()
 
+            # Préparation des données pour export
+            cache_ins_adm = {}
+            adm_ins_list = []
             if ats_adm.data:
-                # Pré-chargement des inscrits pour éviter les doubles requêtes
-                cache_ins_adm = {}
-                adm_ins_list = []
                 for a in ats_adm.data:
                     ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
                     cache_ins_adm[a['id']] = ins_at.data
                     for p in ins_at.data:
                         adm_ins_list.append({"Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'], "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']})
 
-                if adm_ins_list:
-                    df_adm_at = pd.DataFrame(adm_ins_list)
-                    cea1, cea2 = st.columns(2)
-                    cea1.download_button("📥 Excel Planning (Admin)", data=export_to_excel(df_adm_at), file_name="admin_planning_ateliers.xlsx", key="adm_exp_xl")
-                    # PDF mis en forme planning
-                    cea2.download_button("📥 PDF Planning (Admin)", data=export_planning_ateliers_pdf(
-                        "Planning des Ateliers (Administration)", ats_adm.data, lambda aid: cache_ins_adm.get(aid, [])
-                    ), file_name="admin_planning_ateliers.pdf", key="adm_exp_pdf")
+            if adm_ins_list:
+                df_adm_at = pd.DataFrame(adm_ins_list)
+            else:
+                df_adm_at = pd.DataFrame(columns=["Date", "Atelier", "Lieu", "AM", "Enfants"])
 
+            cea1, cea2 = st.columns(2)
+            cea1.download_button("📥 Excel Planning (Admin)", data=export_to_excel(df_adm_at), file_name="admin_planning_ateliers.xlsx", key="adm_exp_xl")
+            cea2.download_button("📥 PDF Planning (Admin)", data=export_planning_ateliers_pdf(
+                "Planning des Ateliers (Administration)", ats_adm.data if ats_adm.data else [], lambda aid: cache_ins_adm.get(aid, [])
+            ), file_name="admin_planning_ateliers.pdf", key="adm_exp_pdf")
+
+            if ats_adm.data:
                 for index, a in enumerate(ats_adm.data):
                     c_l = get_color(a['lieux']['nom'])
                     ins_at = cache_ins_adm.get(a['id'], [])
@@ -641,6 +672,8 @@ elif menu == "🔐 Administration":
                                         st.rerun()
 
                     if index < len(ats_adm.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
+            else:
+                st.info("Aucun atelier trouvé sur cette période.")
 
         with t4: # STATS
             st.subheader("📈 Statistiques de participation")
