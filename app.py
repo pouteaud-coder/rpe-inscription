@@ -289,6 +289,49 @@ def super_admin_dialog():
             st.rerun()
         else: st.error("Code incorrect")
 
+# --- NOUVEAU DIALOGUE : MODIFICATION D'ATELIER ---
+@st.dialog("✏️ Modifier l'atelier")
+def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, capacite_actuelle, lieux_list, horaires_list, map_lieu_id, map_horaire_id):
+    """Dialogue de modification d'un atelier (titre, lieu, horaire, capacité)"""
+    # Chargement des inscriptions pour vérifier la capacité minimale
+    inscriptions = supabase.table("inscriptions").select("nb_enfants").eq("atelier_id", at_id).execute()
+    total_occupation = sum([1 + ins['nb_enfants'] for ins in inscriptions.data]) if inscriptions.data else 0
+
+    # Sélecteurs
+    lieux_options = [l['nom'] for l in lieux_list]
+    horaires_options = [h['libelle'] for h in horaires_list]
+    lieu_actuel_nom = next((l['nom'] for l in lieux_list if l['id'] == lieu_id_actuel), lieux_options[0] if lieux_options else "")
+    horaire_actuel_lib = next((h['libelle'] for h in horaires_list if h['id'] == horaire_id_actuel), horaires_options[0] if horaires_options else "")
+
+    nouveau_titre = st.text_input("Titre", value=titre_actuel)
+    nouveau_lieu = st.selectbox("Lieu", options=lieux_options, index=lieux_options.index(lieu_actuel_nom) if lieu_actuel_nom in lieux_options else 0)
+    nouvel_horaire = st.selectbox("Horaire", options=horaires_options, index=horaires_options.index(horaire_actuel_lib) if horaire_actuel_lib in horaires_options else 0)
+    nouvelle_capacite = st.number_input("Capacité maximale (places totales)", min_value=1, value=int(capacite_actuelle))
+
+    # Vérification de cohérence
+    if nouvelle_capacite < total_occupation:
+        st.error(f"La capacité ne peut pas être inférieure au nombre actuel d'occupants ({total_occupation} places prises).")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Annuler", use_container_width=True):
+            st.rerun()
+    with col2:
+        if st.button("Enregistrer", type="primary", use_container_width=True, disabled=(nouvelle_capacite < total_occupation)):
+            # Récupération des IDs
+            nouveau_lieu_id = next(l['id'] for l in lieux_list if l['nom'] == nouveau_lieu)
+            nouvel_horaire_id = next(h['id'] for h in horaires_list if h['libelle'] == nouvel_horaire)
+            # Mise à jour
+            supabase.table("ateliers").update({
+                "titre": nouveau_titre,
+                "lieu_id": nouveau_lieu_id,
+                "horaire_id": nouvel_horaire_id,
+                "capacite_max": nouvelle_capacite
+            }).eq("id", at_id).execute()
+            enregistrer_log("Admin", "Modification atelier", f"Atelier ID {at_id} modifié : titre={nouveau_titre}, lieu={nouveau_lieu}, horaire={nouvel_horaire}, capacité={nouvelle_capacite}")
+            st.success("Atelier modifié avec succès !")
+            st.rerun()
+
 # --- CHARGEMENT DES DONNÉES GLOBALES ---
 if 'at_list_gen' not in st.session_state: st.session_state['at_list_gen'] = []
 if 'super_access' not in st.session_state: st.session_state['super_access'] = False
@@ -533,7 +576,8 @@ elif menu == "🔐 Administration":
                     if ft == "Actifs" and not a['est_actif']: continue
                     if ft == "Inactifs" and a['est_actif']: continue
                     verrou_icon = " 🔒" if is_verrouille(a) else ""
-                    ca, cb, cc, cd = st.columns([0.6, 0.13, 0.13, 0.14])
+                    # Colonnes : affichage + boutons Désactiver, Verrouiller, Modifier, Supprimer
+                    ca, cb, cc, cd, ce = st.columns([0.5, 0.12, 0.12, 0.12, 0.14])
                     ca.write(f"**{format_date_fr_complete(a['date_atelier'])}** | {a['horaires']['libelle']} | {a['titre']} ({a['lieux']['nom']}){verrou_icon}")
                     btn_l = "🔴 Désactiver" if a['est_actif'] else "🟢 Activer"
                     if cb.button(btn_l, key=f"at_stat_{a['id']}"):
@@ -545,7 +589,10 @@ elif menu == "🔐 Administration":
                         etat_str = "verrouillé" if nouvel_etat else "déverrouillé"
                         enregistrer_log("Admin", "Verrouillage atelier", f"Atelier '{a['titre']}' du {a['date_atelier']} {etat_str}")
                         st.rerun()
-                    if cd.button("🗑️", key=f"at_del_{a['id']}"):
+                    # Bouton Modifier
+                    if cd.button("✏️", key=f"at_edit_{a['id']}"):
+                        edit_atelier_dialog(a['id'], a['titre'], a['lieu_id'], a['horaire_id'], a['capacite_max'], l_raw, h_raw, map_l_id, map_h_id)
+                    if ce.button("🗑️", key=f"at_del_{a['id']}"):
                         cnt = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", a['id']).execute().count
                         delete_atelier_dialog(a['id'], a['titre'], (cnt if cnt else 0) > 0, current_code)
 
