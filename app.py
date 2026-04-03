@@ -229,7 +229,7 @@ def export_suivi_am_pdf(title, data_triee):
 def export_planning_ateliers_pdf(title, ateliers_data, get_inscrits_fn):
     """
     Export PDF du planning des ateliers avec mise en forme fidèle à l'écran :
-    - En-tête par atelier : date, lieu, horaire, compteurs
+    - En-tête par atelier : date, titre, lieu, horaire, compteurs
     - Liste des inscrits en dessous
     """
     pdf = FPDF()
@@ -249,20 +249,20 @@ def export_planning_ateliers_pdf(title, ateliers_data, get_inscrits_fn):
         t_en = sum([p['nb_enfants'] for p in ins_at])
         restantes = a['capacite_max'] - (t_ad + t_en)
         date_fr = format_date_fr_simple(a['date_atelier'])
+        titre_at = a.get('titre', '')
         lieu = a['lieux']['nom']
         horaire = a['horaires']['libelle']
-        titre_at = a.get('titre', '')
         verrou = " [VERROUILLE]" if is_verrouille(a) else ""
 
         # En-tête atelier (fond bleu-gris)
         pdf.set_fill_color(224, 235, 245)
         pdf.set_text_color(0, 0, 0)
         pdf.set_font("Arial", 'B', 11)
-        entete = f"  {date_fr} | {titre_at}{verrou}"
+        entete = f"  {date_fr} | {titre_at} | {lieu}{verrou}"
         pdf.cell(0, 8, entete.encode('latin-1', 'replace').decode('latin-1'), ln=True, fill=True)
 
         pdf.set_font("Arial", size=10)
-        sous = f"     Lieu : {lieu}  |  Horaire : {horaire}  |  AM : {t_ad}  |  Enfants : {t_en}  |  Places restantes : {restantes}"
+        sous = f"     Horaire : {horaire}  |  AM : {t_ad}  |  Enfants : {t_en}  |  Places restantes : {restantes}"
         pdf.cell(0, 6, sous.encode('latin-1', 'replace').decode('latin-1'), ln=True)
 
         # Inscrits triés alphabétiquement
@@ -518,7 +518,7 @@ elif menu == "📊 Suivi & Récap":
             "Planning des Ateliers", ats_raw.data if ats_raw.data else [], lambda aid: cache_ins.get(aid, [])
         ), file_name="planning_ateliers.pdf", key="exp_at_pdf")
 
-        # Affichage écran
+        # Affichage écran (avec titre entre date et lieu)
         if ats_raw.data:
             for index, a in enumerate(ats_raw.data):
                 c_l = get_color(a['lieux']['nom'])
@@ -526,7 +526,7 @@ elif menu == "📊 Suivi & Récap":
                 t_ad, t_en = len(ins_at), sum([p['nb_enfants'] for p in ins_at])
                 restantes = a['capacite_max'] - (t_ad + t_en)
                 cl_c = "alerte-complet" if restantes <= 0 else ""
-                st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span> <span class='compteur-badge'>👤 {t_ad} AM</span> <span class='compteur-badge'>👶 {t_en} enf.</span> <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>", unsafe_allow_html=True)
+                st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | {a['titre']} | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span> <span class='compteur-badge'>👤 {t_ad} AM</span> <span class='compteur-badge'>👶 {t_en} enf.</span> <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>", unsafe_allow_html=True)
                 if ins_at:
                     ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
                     html = "<div class='container-inscrits'>"
@@ -560,7 +560,7 @@ elif menu == "🔐 Administration":
             sub = st.radio("Mode", ["Générateur", "Répertoire", "Actions groupées"], horizontal=True)
 
             if sub == "Générateur":
-                # --- Sélection du lieu et horaire par défaut avant génération ---
+                # Sélection du lieu et horaire par défaut avant génération
                 col_lieu, col_horaire = st.columns(2)
                 with col_lieu:
                     lieu_par_defaut = st.selectbox("Lieu par défaut pour les nouvelles lignes :", 
@@ -581,10 +581,8 @@ elif menu == "🔐 Administration":
                     while curr <= d2:
                         js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
                         if js_fr[curr.weekday()] in jours:
-                            # Utiliser le lieu et horaire sélectionnés, ou laisser vide
                             lieu_val = lieu_par_defaut if lieu_par_defaut else ""
                             horaire_val = horaire_par_defaut if horaire_par_defaut else ""
-                            # La capacité par défaut est celle du lieu choisi, sinon 10
                             capa = map_l_cap.get(lieu_val, 10) if lieu_val else 10
                             tmp.append({
                                 "Date": format_date_fr_complete(curr, False), 
@@ -617,7 +615,6 @@ elif menu == "🔐 Administration":
                         for _, r in df_ed.iterrows():
                             lieu_nom = r['Lieu']
                             horaire_lib = r['Horaire']
-                            # Vérification : si le lieu ou l'horaire est vide, on ignore cette ligne
                             if not lieu_nom or not horaire_lib:
                                 st.warning(f"Ligne ignorée : lieu ou horaire manquant pour la date {r['Date']}")
                                 continue
@@ -726,10 +723,22 @@ elif menu == "🔐 Administration":
 
         with t3: # PLANNING ATELIERS (Admin)
             st.subheader("📅 Planning des Ateliers")
+            
+            # Filtre statut
+            filtre_statut = st.radio("Filtrer par statut :", ["Tous", "Actifs", "Inactifs"], horizontal=True, key="admin_plan_filtre")
+            
             c1_adm, c2_adm = st.columns(2)
             d_s_a = c1_adm.date_input("Du", date.today(), key="adm_plan_d1", format="DD/MM/YYYY")
             d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=30), key="adm_plan_d2", format="DD/MM/YYYY")
-            ats_adm = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a)).order("date_atelier").execute()
+            
+            # Construction de la requête en fonction du filtre
+            query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a))
+            if filtre_statut == "Actifs":
+                query = query.eq("est_actif", True)
+            elif filtre_statut == "Inactifs":
+                query = query.eq("est_actif", False)
+            # Si "Tous", pas de filtre sur est_actif
+            ats_adm = query.order("date_atelier").execute()
 
             # Préparation des données pour export
             cache_ins_adm = {}
@@ -762,7 +771,8 @@ elif menu == "🔐 Administration":
                     verrou_icon = " 🔒" if is_verrouille(a) else ""
                     at_info_log = f"{a['date_atelier']} | {a['horaires']['libelle']} | {a['lieux']['nom']}"
 
-                    st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span>{verrou_icon} <span class='compteur-badge'>👤 {t_ad} AM</span> <span class='compteur-badge'>👶 {t_en} enf.</span> <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>", unsafe_allow_html=True)
+                    # Affichage avec titre entre date et lieu
+                    st.markdown(f"**{format_date_fr_complete(a['date_atelier'])}** | {a['titre']} | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | <span class='horaire-text'>{a['horaires']['libelle']}</span>{verrou_icon} <span class='compteur-badge'>👤 {t_ad} AM</span> <span class='compteur-badge'>👶 {t_en} enf.</span> <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>", unsafe_allow_html=True)
 
                     if ins_at:
                         ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
@@ -812,6 +822,10 @@ elif menu == "🔐 Administration":
             de_stat = cs2.date_input("Date fin", date.today(), key="stat_d2", format="DD/MM/YYYY")
             ins_stat = supabase.table("inscriptions").select("*, adherents(nom, prenom), ateliers!inner(date_atelier)").gte("ateliers.date_atelier", str(ds_stat)).lte("ateliers.date_atelier", str(de_stat)).execute()
             ats_count = supabase.table("ateliers").select("id", count="exact").gte("date_atelier", str(ds_stat)).lte("date_atelier", str(de_stat)).execute()
+            
+            # Récupération de la liste des ateliers pour l'affichage
+            ateliers_periode = supabase.table("ateliers").select("date_atelier, titre, lieux(nom), horaires(libelle)").gte("date_atelier", str(ds_stat)).lte("date_atelier", str(de_stat)).order("date_atelier").execute()
+            
             if ins_stat.data:
                 stats_list = []
                 for am_nom in liste_adh:
@@ -819,22 +833,51 @@ elif menu == "🔐 Administration":
                     count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
                     stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
                 df_stats = pd.DataFrame(stats_list).sort_values("Nombre d'ateliers", ascending=False)
+                # Affichage du tableau sans colonne d'index
                 st.table(df_stats)
                 total_inscr = df_stats["Nombre d'ateliers"].sum()
                 nb_at_proposes = ats_count.count if ats_count.count else 0
                 st.markdown(f"**Total des inscriptions sur la période :** {total_inscr}")
                 st.markdown(f"**Nombre d'ateliers proposés sur la période :** {nb_at_proposes}")
+                
+                # Liste détaillée des ateliers proposés
+                if ateliers_periode.data:
+                    st.markdown("**Ateliers proposés :**")
+                    for at in ateliers_periode.data:
+                        date_fr = format_date_fr_simple(at['date_atelier'])
+                        lieu_nom = at['lieux']['nom']
+                        horaire_lib = at['horaires']['libelle']
+                        st.write(f"- {date_fr} : **{at['titre']}** ({lieu_nom} - {horaire_lib})")
+                else:
+                    st.info("Aucun atelier proposé sur cette période.")
+                
                 ce_s1, ce_s2 = st.columns(2)
                 ce_s1.download_button("📥 Excel Statistiques", data=export_to_excel(df_stats), file_name=f"stats_am_{ds_stat}_{de_stat}.xlsx")
-                # PDF stats mis en forme : tableau + totaux
+                # PDF stats mis en forme : tableau + totaux + liste ateliers
                 pdf_stat_lines = []
                 for _, r in df_stats.iterrows():
                     pdf_stat_lines.append(f"{r['Assistante Maternelle']} : {r['Nombre d\'ateliers']} atelier(s)")
                 pdf_stat_lines.append("")
                 pdf_stat_lines.append(f"Total inscriptions sur la periode : {total_inscr}")
                 pdf_stat_lines.append(f"Ateliers proposes sur la periode : {nb_at_proposes}")
+                pdf_stat_lines.append("")
+                pdf_stat_lines.append("Liste des ateliers proposes :")
+                for at in ateliers_periode.data:
+                    date_fr = format_date_fr_simple(at['date_atelier'])
+                    lieu_nom = at['lieux']['nom']
+                    horaire_lib = at['horaires']['libelle']
+                    pdf_stat_lines.append(f"- {date_fr} : {at['titre']} ({lieu_nom} - {horaire_lib})")
                 ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques de participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
-            else: st.info("Aucune donnée pour cette période.")
+            else:
+                st.info("Aucune donnée pour cette période.")
+                # Même si aucune inscription, on peut afficher les ateliers proposés
+                if ateliers_periode.data:
+                    st.markdown("**Ateliers proposés sur la période :**")
+                    for at in ateliers_periode.data:
+                        date_fr = format_date_fr_simple(at['date_atelier'])
+                        lieu_nom = at['lieux']['nom']
+                        horaire_lib = at['horaires']['libelle']
+                        st.write(f"- {date_fr} : **{at['titre']}** ({lieu_nom} - {horaire_lib})")
 
         with t5: # 👥 LISTE AM
             with st.form("add_am"):
