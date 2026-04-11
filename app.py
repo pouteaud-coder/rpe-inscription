@@ -50,10 +50,14 @@ st.markdown("""
     </div>
     """, unsafe_allow_html=True)
 
-# --- CONNEXION SUPABASE ---
-url = st.secrets["supabase_url"]
-key = st.secrets["supabase_key"]
-supabase: Client = create_client(url, key)
+# --- CONNEXION SUPABASE (mise en cache pour éviter de recréer le client à chaque rendu) ---
+@st.cache_resource
+def get_supabase_client() -> Client:
+    url = st.secrets["supabase_url"]
+    key = st.secrets["supabase_key"]
+    return create_client(url, key)
+
+supabase = get_supabase_client()
 
 # --- STYLE CSS (identique) ---
 st.markdown("""
@@ -83,6 +87,7 @@ def get_color(nom_lieu):
     hash_object = hashlib.md5(str(nom_lieu).upper().strip().encode())
     return f"#{hash_object.hexdigest()[:6]}"
 
+@st.cache_data(ttl=300)
 def get_secret_code():
     try:
         res = supabase.table("configuration").select("secret_code").eq("id", "main_config").execute()
@@ -399,14 +404,32 @@ def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, 
             st.success("Atelier modifié avec succès !")
             st.rerun()
 
-# --- CHARGEMENT DES DONNÉES GLOBALES (inchangé) ---
+# --- CHARGEMENT DES DONNÉES GLOBALES (avec cache pour éviter les rechargements inutiles) ---
+@st.cache_data(ttl=60)
+def load_adherents():
+    res = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").order("prenom").execute()
+    return res.data
+
+@st.cache_data(ttl=60)
+def load_lieux():
+    return supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
+
+@st.cache_data(ttl=60)
+def load_horaires():
+    return supabase.table("horaires").select("*").eq("est_actif", True).execute().data
+
 if 'at_list_gen' not in st.session_state: st.session_state['at_list_gen'] = []
 if 'super_access' not in st.session_state: st.session_state['super_access'] = False
 
 current_code = get_secret_code()
-res_adh = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").order("prenom").execute()
-dict_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh.data}
+res_adh_data = load_adherents()
+dict_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh_data}
 liste_adh = list(dict_adh.keys())
+
+# Objet compatible avec le reste du code (accès via res_adh.data)
+class _DataWrapper:
+    def __init__(self, data): self.data = data
+res_adh = _DataWrapper(res_adh_data)
 
 # --- NAVIGATION ---
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "📊 Suivi & Récap", "🔐 Administration"])
@@ -422,9 +445,20 @@ if menu == "📝 Inscriptions":
         today_str = str(date.today())
         res_at = supabase.table("ateliers").select("*, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
 
+        # --- OPTIMISATION : chargement groupé de toutes les inscriptions en une seule requête ---
+        if res_at.data:
+            at_ids = [at['id'] for at in res_at.data]
+            all_ins_raw = supabase.table("inscriptions").select("*, adherents(nom, prenom)").in_("atelier_id", at_ids).execute()
+            # Index par atelier_id pour accès O(1)
+            ins_by_atelier = {}
+            for ins in all_ins_raw.data:
+                ins_by_atelier.setdefault(ins['atelier_id'], []).append(ins)
+        else:
+            ins_by_atelier = {}
+
         for at in res_at.data:
-            res_ins = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", at['id']).execute()
-            total_occ = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_ins.data])
+            res_ins_data = ins_by_atelier.get(at['id'], [])
+            total_occ = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_ins_data])
             restantes = at['capacite_max'] - total_occ
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"
@@ -436,8 +470,8 @@ if menu == "📝 Inscriptions":
                 if is_verrouille(at):
                     st.warning("🔒 Cet atelier est géré par l'administration. Les inscriptions et désinscriptions ne sont pas disponibles ici.")
 
-                if res_ins.data:
-                    for i in res_ins.data:
+                if res_ins_data:
+                    for i in res_ins_data:
                         n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
                         if is_verrouille(at):
                             st.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
@@ -458,7 +492,7 @@ if menu == "📝 Inscriptions":
                     if c3.button("Valider", key=f"v_{at['id']}", type="primary"):
                         if qui != "Choisir...":
                             id_adh = dict_adh[qui]
-                            existing = next((ins for ins in res_ins.data if ins['adherent_id'] == id_adh), None)
+                            existing = next((ins for ins in res_ins_data if ins['adherent_id'] == id_adh), None)
                             if existing:
                                 if restantes - (nb_e - existing['nb_enfants']) < 0: st.error("Manque de places")
                                 else:
@@ -524,14 +558,16 @@ elif menu == "📊 Suivi & Récap":
         d_e = c_d2.date_input("Au", d_s + timedelta(days=30), key="pub_d2", format="DD/MM/YYYY")
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s)).lte("date_atelier", str(d_e)).order("date_atelier").execute()
 
-        # Préparation des données pour export
+        # --- OPTIMISATION : une seule requête pour toutes les inscriptions de la période ---
         all_ins_data = []
         cache_ins = {}
         if ats_raw.data:
+            at_ids_pub = [a['id'] for a in ats_raw.data]
+            all_ins_pub = supabase.table("inscriptions").select("*, adherents(nom, prenom)").in_("atelier_id", at_ids_pub).execute()
+            for ins in all_ins_pub.data:
+                cache_ins.setdefault(ins['atelier_id'], []).append(ins)
             for a in ats_raw.data:
-                ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
-                cache_ins[a['id']] = ins_at.data
-                for p in ins_at.data:
+                for p in cache_ins.get(a['id'], []):
                     all_ins_data.append({
                         "Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'],
                         "Horaire": a['horaires']['libelle'],
@@ -585,8 +621,8 @@ elif menu == "🔐 Administration":
         ])
 
         with t1: # ATELIERS
-            l_raw = supabase.table("lieux").select("*").eq("est_actif", True).order("nom").execute().data
-            h_raw = supabase.table("horaires").select("*").eq("est_actif", True).execute().data
+            l_raw = load_lieux()
+            h_raw = load_horaires()
             l_list = [l['nom'] for l in l_raw]; h_list = [h['libelle'] for h in h_raw]
             map_l_cap = {l['nom']: l['capacite_accueil'] for l in l_raw}
             map_l_id = {l['nom']: l['id'] for l in l_raw}; map_h_id = {h['libelle']: h['id'] for h in h_raw}
@@ -773,14 +809,16 @@ elif menu == "🔐 Administration":
             # Si "Tous", pas de filtre sur est_actif
             ats_adm = query.order("date_atelier").execute()
 
-            # Préparation des données pour export
+            # --- OPTIMISATION : une seule requête pour toutes les inscriptions ---
             cache_ins_adm = {}
             adm_ins_list = []
             if ats_adm.data:
+                at_ids_adm = [a['id'] for a in ats_adm.data]
+                all_ins_adm = supabase.table("inscriptions").select("*, adherents(nom, prenom)").in_("atelier_id", at_ids_adm).execute()
+                for ins in all_ins_adm.data:
+                    cache_ins_adm.setdefault(ins['atelier_id'], []).append(ins)
                 for a in ats_adm.data:
-                    ins_at = supabase.table("inscriptions").select("*, adherents(nom, prenom)").eq("atelier_id", a['id']).execute()
-                    cache_ins_adm[a['id']] = ins_at.data
-                    for p in ins_at.data:
+                    for p in cache_ins_adm.get(a['id'], []):
                         adm_ins_list.append({"Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'], "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']})
 
             if adm_ins_list:
@@ -941,7 +979,10 @@ elif menu == "🔐 Administration":
                 nom = c1.text_input("Nom").upper().strip()
                 pre = " ".join([w.capitalize() for w in c2.text_input("Prénom").split()]).strip()
                 if st.form_submit_button("➕ Ajouter"):
-                    if nom and pre: supabase.table("adherents").insert({"nom": nom, "prenom": pre, "est_actif": True}).execute(); st.rerun()
+                    if nom and pre:
+                        supabase.table("adherents").insert({"nom": nom, "prenom": pre, "est_actif": True}).execute()
+                        load_adherents.clear()
+                        st.rerun()
             for u in res_adh.data:
                 c1, c_edit, c_del = st.columns([0.7, 0.15, 0.15])
                 c1.write(f"**{u['nom']}** {u['prenom']}")
@@ -950,28 +991,33 @@ elif menu == "🔐 Administration":
 
         with t6: # 📍 LIEUX / HORAIRES
             cl1, cl2 = st.columns(2)
+            l_raw_t6 = load_lieux()
+            h_raw_t6 = load_horaires()
             with cl1:
                 st.subheader("Lieux")
-                for l in l_raw:
+                for l in l_raw_t6:
                     ca, cb = st.columns([0.8, 0.2]); ca.markdown(f"<span class='lieu-badge' style='background-color:{get_color(l['nom'])}'>{l['nom']} (Cap: {l['capacite_accueil']})</span>", unsafe_allow_html=True)
                     if cb.button("🗑️", key=f"lx_{l['id']}"): secure_delete_dialog("lieux", l['id'], l['nom'], current_code)
                 with st.form("add_lx"):
                     nl, cp = st.text_input("Nouveau Lieu"), st.number_input("Capacité", 1, 50, 10)
-                    if st.form_submit_button("Ajouter"): supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cp, "est_actif": True}).execute(); st.rerun()
+                    if st.form_submit_button("Ajouter"): supabase.table("lieux").insert({"nom": nl, "capacite_accueil": cp, "est_actif": True}).execute(); load_lieux.clear(); st.rerun()
             with cl2:
                 st.subheader("Horaires")
-                for h in h_raw:
+                for h in h_raw_t6:
                     cc, cd = st.columns([0.8, 0.2]); cc.write(f"• {h['libelle']}")
                     if cd.button("🗑️", key=f"hx_{h['id']}"): secure_delete_dialog("horaires", h['id'], h['libelle'], current_code)
                 with st.form("add_hx"):
                     nh = st.text_input("Nouvel Horaire")
-                    if st.form_submit_button("Ajouter"): supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); st.rerun()
+                    if st.form_submit_button("Ajouter"): supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); load_horaires.clear(); st.rerun()
 
         with t7: # ⚙️ SÉCURITÉ
             with st.form("sec_form"):
                 o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
                 if st.form_submit_button("Changer le code"):
-                    if o == current_code or o == "0000": supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute(); st.rerun()
+                    if o == current_code or o == "0000":
+                        supabase.table("configuration").update({"secret_code": n}).eq("id", "main_config").execute()
+                        get_secret_code.clear()
+                        st.rerun()
                     else: st.error("Ancien code incorrect")
             if st.button("🚪 Déconnexion Super Admin"): st.session_state['super_access'] = False; st.rerun()
 
