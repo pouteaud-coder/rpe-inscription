@@ -69,6 +69,18 @@ st.markdown("""
     .nb-enfants-focus { color: #2e7d32; font-weight: 600; }
     .stButton button { border-radius: 8px !important; }
     .badge-verrouille { background-color: #e65100; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; margin-left: 6px; }
+    
+        /* Centrage des colonnes dans le tableau des stats */
+    [data-testid="stDataFrame"] table thead tr th:nth-child(1),
+    [data-testid="stDataFrame"] table tbody tr td:nth-child(1) {
+        text-align: left !important;   /* 1ère colonne (Assistante Maternelle) reste à gauche */
+    }
+    [data-testid="stDataFrame"] table thead tr th:nth-child(2),
+    [data-testid="stDataFrame"] table tbody tr td:nth-child(2) {
+        text-align: center !important; /* 2ème colonne (Nombre d'ateliers) centrée */
+    }
+    
+    
     </style>
     """, unsafe_allow_html=True)
 
