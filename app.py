@@ -860,7 +860,6 @@ elif menu == "🔐 Administration":
                     count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
                     stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
                 df_stats = pd.DataFrame(stats_list).sort_values("Nombre d'ateliers", ascending=False)
-                # Affichage du tableau sans colonne d'index
                 st.table(df_stats)
                 total_inscr = df_stats["Nombre d'ateliers"].sum()
                 nb_at_proposes = ats_count.count if ats_count.count else 0
@@ -878,26 +877,39 @@ elif menu == "🔐 Administration":
                 else:
                     st.info("Aucun atelier proposé sur cette période.")
                 
+                # --- Export Excel avec période ---
+                output_excel = io.BytesIO()
+                with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+                    workbook = writer.book
+                    worksheet = workbook.add_worksheet('Statistiques')
+                    title_format = workbook.add_format({'bold': True, 'font_size': 12})
+                    worksheet.write(0, 0, f"Période : du {ds_stat.strftime('%d/%m/%Y')} au {de_stat.strftime('%d/%m/%Y')}", title_format)
+                    df_stats.to_excel(writer, sheet_name='Statistiques', startrow=2, index=False)
+                excel_data = output_excel.getvalue()
+                
                 ce_s1, ce_s2 = st.columns(2)
-                ce_s1.download_button("📥 Excel Statistiques", data=export_to_excel(df_stats), file_name=f"stats_am_{ds_stat}_{de_stat}.xlsx")
-                # PDF stats mis en forme : tableau + totaux + liste ateliers
+                ce_s1.download_button("📥 Excel Statistiques", data=excel_data, file_name=f"stats_am_{ds_stat}_{de_stat}.xlsx")
+                
+                # --- Export PDF avec période ---
                 pdf_stat_lines = []
+                pdf_stat_lines.append(f"Période : du {ds_stat.strftime('%d/%m/%Y')} au {de_stat.strftime('%d/%m/%Y')}")
+                pdf_stat_lines.append("")
                 for _, r in df_stats.iterrows():
                     pdf_stat_lines.append(f"{r['Assistante Maternelle']} : {r['Nombre d\'ateliers']} atelier(s)")
                 pdf_stat_lines.append("")
-                pdf_stat_lines.append(f"Total inscriptions sur la periode : {total_inscr}")
-                pdf_stat_lines.append(f"Ateliers proposes sur la periode : {nb_at_proposes}")
+                pdf_stat_lines.append(f"Total inscriptions sur la période : {total_inscr}")
+                pdf_stat_lines.append(f"Ateliers proposés sur la période : {nb_at_proposes}")
                 pdf_stat_lines.append("")
-                pdf_stat_lines.append("Liste des ateliers proposes :")
+                pdf_stat_lines.append("Liste des ateliers proposés :")
                 for at in ateliers_periode.data:
                     date_fr = format_date_fr_simple(at['date_atelier'])
                     lieu_nom = at['lieux']['nom']
                     horaire_lib = at['horaires']['libelle']
                     pdf_stat_lines.append(f"- {date_fr} : {at['titre']} ({lieu_nom} - {horaire_lib})")
+                
                 ce_s2.download_button("📥 PDF Statistiques", data=export_to_pdf("Statistiques de participation AM", pdf_stat_lines), file_name=f"stats_am_{ds_stat}_{de_stat}.pdf")
             else:
                 st.info("Aucune donnée pour cette période.")
-                # Même si aucune inscription, on peut afficher les ateliers proposés
                 if ateliers_periode.data:
                     st.markdown("**Ateliers proposés sur la période :**")
                     for at in ateliers_periode.data:
