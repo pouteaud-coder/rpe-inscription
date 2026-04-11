@@ -75,9 +75,9 @@ st.markdown("""
     [data-testid="stDataFrame"] table tbody tr td:nth-child(1) {
         text-align: left !important;   /* 1ère colonne (Assistante Maternelle) reste à gauche */
     }
-    [data-testid="stDataFrame"] table thead tr th:nth-child(2),
-    [data-testid="stDataFrame"] table tbody tr td:nth-child(2) {
-        text-align: center !important; /* 2ème colonne (Nombre d'ateliers) centrée */
+    .stDataFrame table thead tr th:nth-child(2),
+    .stDataFrame table tbody tr td:nth-child(2) {
+        text-align: center !important;
     }
     
     
