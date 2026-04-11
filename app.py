@@ -860,7 +860,7 @@ elif menu == "🔐 Administration":
                     count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
                     stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
                 df_stats = pd.DataFrame(stats_list).sort_values("Nombre d'ateliers", ascending=False)
-                st.table(df_stats)
+                st.dataframe(df_stats, hide_index=True, use_container_width=True)
                 total_inscr = df_stats["Nombre d'ateliers"].sum()
                 nb_at_proposes = ats_count.count if ats_count.count else 0
                 st.markdown(f"**Total des inscriptions sur la période :** {total_inscr}")
