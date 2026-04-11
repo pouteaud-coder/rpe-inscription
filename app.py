@@ -856,7 +856,6 @@ elif menu == "🔐 Administration":
             ins_stat = supabase.table("inscriptions").select("*, adherents(nom, prenom), ateliers(date_atelier)").gte("ateliers.date_atelier", str(ds_stat)).lte("ateliers.date_atelier", str(de_stat)).execute()
             ats_count = supabase.table("ateliers").select("id", count="exact").gte("date_atelier", str(ds_stat)).lte("date_atelier", str(de_stat)).execute()
             
-            # Récupération de la liste des ateliers pour l'affichage
             ateliers_periode = supabase.table("ateliers").select("date_atelier, titre, lieux(nom), horaires(libelle)").gte("date_atelier", str(ds_stat)).lte("date_atelier", str(de_stat)).order("date_atelier").execute()
             
             if ins_stat.data:
@@ -866,41 +865,25 @@ elif menu == "🔐 Administration":
                     count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
                     stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
                 df_stats = pd.DataFrame(stats_list)
-                # Filtrage : garder uniquement celles avec au moins 1 atelier
                 df_stats = df_stats[df_stats["Nombre d'ateliers"] > 0]
-                # Tri : par nombre décroissant, puis par nom alphabétique
                 df_stats = df_stats.sort_values(["Nombre d'ateliers", "Assistante Maternelle"], ascending=[False, True])
                 
-                # --- Affichage avec tableau HTML centré pour la 2e colonne ---
-                html_table = """
-                <table style="width:100%; border-collapse:collapse; font-family:inherit;">
-                    <thead>
-                        <tr style="background-color:#f0f2f6; border-bottom:2px solid #ddd;">
-                            <th style="text-align:left; padding:8px;">Assistante Maternelle</th>
-                            <th style="text-align:center; padding:8px;">Nombre d'ateliers</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                """
-                for _, row in df_stats.iterrows():
-                    html_table += f"""
-                        <tr style="border-bottom:1px solid #eee;">
-                            <td style="text-align:left; padding:8px;">{row['Assistante Maternelle']}</td>
-                            <td style="text-align:center; padding:8px;">{row['Nombre d\'ateliers']}</td>
-                        </tr>
-                    """
-                html_table += """
-                    </tbody>
-                </table>
-                """
-                st.markdown(html_table, unsafe_allow_html=True)
+                # --- Affichage avec st.dataframe (CSS pour centrage) ---
+                st.dataframe(
+                    df_stats,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Assistante Maternelle": st.column_config.TextColumn("Assistante Maternelle"),
+                        "Nombre d'ateliers": st.column_config.NumberColumn("Nombre d'ateliers", format="%d")
+                    }
+                )
                 
                 total_inscr = df_stats["Nombre d'ateliers"].sum()
                 nb_at_proposes = ats_count.count if ats_count.count else 0
                 st.markdown(f"**Total des inscriptions sur la période :** {total_inscr}")
                 st.markdown(f"**Nombre d'ateliers proposés sur la période :** {nb_at_proposes}")
                 
-                # Liste détaillée des ateliers proposés
                 if ateliers_periode.data:
                     st.markdown("**Ateliers proposés :**")
                     for at in ateliers_periode.data:
@@ -911,7 +894,7 @@ elif menu == "🔐 Administration":
                 else:
                     st.info("Aucun atelier proposé sur cette période.")
                 
-                # --- Export Excel avec période ---
+                # --- Export Excel ---
                 output_excel = io.BytesIO()
                 with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
                     workbook = writer.book
@@ -924,7 +907,7 @@ elif menu == "🔐 Administration":
                 ce_s1, ce_s2 = st.columns(2)
                 ce_s1.download_button("📥 Excel Statistiques", data=excel_data, file_name=f"stats_am_{ds_stat}_{de_stat}.xlsx")
                 
-                # --- Export PDF avec période ---
+                # --- Export PDF ---
                 pdf_stat_lines = []
                 pdf_stat_lines.append(f"Période : du {ds_stat.strftime('%d/%m/%Y')} au {de_stat.strftime('%d/%m/%Y')}")
                 pdf_stat_lines.append("")
