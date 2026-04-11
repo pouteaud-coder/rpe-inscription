@@ -70,16 +70,6 @@ st.markdown("""
     .stButton button { border-radius: 8px !important; }
     .badge-verrouille { background-color: #e65100; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; margin-left: 6px; }
     
-        /* Centrage des colonnes dans le tableau des stats */
-    [data-testid="stDataFrame"] table thead tr th:nth-child(1),
-    [data-testid="stDataFrame"] table tbody tr td:nth-child(1) {
-        text-align: left !important;   /* 1ère colonne (Assistante Maternelle) reste à gauche */
-    }
-    .stDataFrame table thead tr th:nth-child(2),
-    .stDataFrame table tbody tr td:nth-child(2) {
-        text-align: center !important;
-    }
-    
     
     </style>
     """, unsafe_allow_html=True)
@@ -872,7 +862,31 @@ elif menu == "🔐 Administration":
                     count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
                     stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
                 df_stats = pd.DataFrame(stats_list).sort_values("Nombre d'ateliers", ascending=False)
-                st.dataframe(df_stats, hide_index=True, use_container_width=True)
+                
+                # --- Affichage avec tableau HTML centré pour la 2e colonne ---
+                html_table = """
+                <table style="width:100%; border-collapse:collapse; font-family:inherit;">
+                    <thead>
+                        <tr style="background-color:#f0f2f6; border-bottom:2px solid #ddd;">
+                            <th style="text-align:left; padding:8px;">Assistante Maternelle</th>
+                            <th style="text-align:center; padding:8px;">Nombre d'ateliers</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                """
+                for _, row in df_stats.iterrows():
+                    html_table += f"""
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="text-align:left; padding:8px;">{row['Assistante Maternelle']}</td>
+                            <td style="text-align:center; padding:8px;">{row['Nombre d\'ateliers']}</td>
+                        </tr>
+                    """
+                html_table += """
+                    </tbody>
+                </table>
+                """
+                st.markdown(html_table, unsafe_allow_html=True)
+                
                 total_inscr = df_stats["Nombre d'ateliers"].sum()
                 nb_at_proposes = ats_count.count if ats_count.count else 0
                 st.markdown(f"**Total des inscriptions sur la période :** {total_inscr}")
@@ -929,7 +943,7 @@ elif menu == "🔐 Administration":
                         lieu_nom = at['lieux']['nom']
                         horaire_lib = at['horaires']['libelle']
                         st.write(f"- {date_fr} : **{at['titre']}** ({lieu_nom} - {horaire_lib})")
-
+                        
         with t5: # 👥 LISTE AM
             with st.form("add_am"):
                 c1, c2 = st.columns(2)
