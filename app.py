@@ -12,6 +12,32 @@ from fpdf import FPDF
 # ==========================================
 st.set_page_config(page_title="RPE Connect", page_icon="🌿", layout="wide")
 
+# --- GATEKEEPER : Code d'accès général ---
+def check_access():
+    """Vérifie si l'utilisateur a saisi le bon code d'accès."""
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+
+    if not st.session_state["authenticated"]:
+        st.markdown("""
+            <div style="display: flex; align-items: center; justify-content: center; min-height: 60vh;">
+                <div style="background-color: #fdf2e9; padding: 2rem; border-radius: 20px; text-align: center; border: 2px solid #ff9800;">
+                    <h2 style="color: #e65100;">🔐 Accès sécurisé</h2>
+                    <p>Veuillez saisir le code d'accès pour continuer.</p>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        code = st.text_input("Code d'accès", type="password", key="gate_code")
+        if st.button("Valider", type="primary"):
+            if code == "78955":
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Code incorrect. Accès refusé.")
+        st.stop()  # Empêche l'exécution du reste de l'application
+
+check_access()
+
 # --- TITRE DE L'APPLICATION ---
 st.markdown("""
     <div style="display: flex; align-items: center; background-color: #fdf2e9; padding: 20px; border-radius: 15px; margin-bottom: 25px; border: 2px solid #ff9800;">
@@ -28,7 +54,7 @@ url = st.secrets["supabase_url"]
 key = st.secrets["supabase_key"]
 supabase: Client = create_client(url, key)
 
-# --- STYLE CSS ---
+# --- STYLE CSS (identique) ---
 st.markdown("""
     <style>
     html, body, [class*="st-"] { font-size: 1.05rem !important; }
@@ -45,7 +71,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- FONCTIONS UTILITAIRES ---
+# --- FONCTIONS UTILITAIRES (inchangées) ---
 def get_color(nom_lieu):
     hash_object = hashlib.md5(str(nom_lieu).upper().strip().encode())
     return f"#{hash_object.hexdigest()[:6]}"
@@ -156,7 +182,7 @@ def trier_par_nom_puis_date(data):
         i['ateliers']['date_atelier']
     ))
 
-# --- FONCTIONS D'EXPORT ---
+# --- FONCTIONS D'EXPORT (inchangées) ---
 def export_to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -276,7 +302,7 @@ def export_planning_ateliers_pdf(title, ateliers_data, get_inscrits_fn):
 
     return pdf.output(dest='S').encode('latin-1')
 
-# --- DIALOGUES ---
+# --- DIALOGUES (inchangés) ---
 @st.dialog("⚠️ Confirmation")
 def secure_delete_dialog(table, item_id, label, current_code):
     st.write(f"Voulez-vous vraiment désactiver/supprimer : **{label}** ?")
@@ -366,7 +392,7 @@ def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, 
             st.success("Atelier modifié avec succès !")
             st.rerun()
 
-# --- CHARGEMENT DES DONNÉES GLOBALES ---
+# --- CHARGEMENT DES DONNÉES GLOBALES (inchangé) ---
 if 'at_list_gen' not in st.session_state: st.session_state['at_list_gen'] = []
 if 'super_access' not in st.session_state: st.session_state['super_access'] = False
 
@@ -379,7 +405,7 @@ liste_adh = list(dict_adh.keys())
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "📊 Suivi & Récap", "🔐 Administration"])
 
 # ==========================================
-# SECTION 📝 INSCRIPTIONS
+# SECTION 📝 INSCRIPTIONS (inchangée)
 # ==========================================
 if menu == "📝 Inscriptions":
     st.header("📍 Inscriptions")
@@ -440,7 +466,7 @@ if menu == "📝 Inscriptions":
                                     st.rerun()
 
 # ==========================================
-# SECTION 📊 SUIVI & RÉCAP
+# SECTION 📊 SUIVI & RÉCAP (inchangée)
 # ==========================================
 elif menu == "📊 Suivi & Récap":
     st.header("🔎 Consultation")
@@ -537,7 +563,7 @@ elif menu == "📊 Suivi & Récap":
             st.info("Aucun atelier trouvé sur cette période.")
 
 # ==========================================
-# SECTION 🔐 ADMINISTRATION
+# SECTION 🔐 ADMINISTRATION (inchangée)
 # ==========================================
 elif menu == "🔐 Administration":
     c_login1, c_login2 = st.columns([0.7, 0.3])
