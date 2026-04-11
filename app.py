@@ -861,7 +861,11 @@ elif menu == "🔐 Administration":
                     am_id = dict_adh[am_nom]
                     count = sum(1 for x in ins_stat.data if x['adherent_id'] == am_id)
                     stats_list.append({"Assistante Maternelle": am_nom, "Nombre d'ateliers": count})
-                df_stats = pd.DataFrame(stats_list).sort_values("Nombre d'ateliers", ascending=False)
+                df_stats = pd.DataFrame(stats_list)
+                # Filtrage : garder uniquement celles avec au moins 1 atelier
+                df_stats = df_stats[df_stats["Nombre d'ateliers"] > 0]
+                # Tri : par nombre décroissant, puis par nom alphabétique
+                df_stats = df_stats.sort_values(["Nombre d'ateliers", "Assistante Maternelle"], ascending=[False, True])
                 
                 # --- Affichage avec tableau HTML centré pour la 2e colonne ---
                 html_table = """
