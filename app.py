@@ -69,9 +69,9 @@ st.markdown("""
     .nb-enfants-focus { color: #2e7d32; font-weight: 600; }
     .stButton button { border-radius: 8px !important; }
     .badge-verrouille { background-color: #e65100; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; margin-left: 6px; }
-        /* Centrage de la colonne "Nombre d'ateliers" dans les tableaux st.dataframe */
-    .stDataFrame table td:nth-child(2),
-    .stDataFrame table th:nth-child(2) {
+    /* Centrage de la colonne "Nombre d'ateliers" */
+    .stDataFrame table thead tr th:nth-child(2),
+    .stDataFrame table tbody tr td:nth-child(2) {
         text-align: center !important;
     }
     
