@@ -36,7 +36,8 @@ def check_access():
                 st.error("Code incorrect. Accès refusé.")
         st.stop()  # Empêche l'exécution du reste de l'application
 
-check_access()
+# check_access()   # désactivé pour les tests
+st.session_state["authenticated"] = True
 
 # --- TITRE DE L'APPLICATION ---
 st.markdown("""
