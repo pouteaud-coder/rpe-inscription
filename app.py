@@ -866,42 +866,42 @@ elif menu == "🔐 Administration":
                         supabase.table("ateliers").update({"est_actif": (action=="Activer")}).gte("date_atelier", str(bs)).lte("date_atelier", str(be)).execute()
                         st.rerun()
 
-        with t2: # SUIVI AM (Admin)
-            choix_adm = st.multiselect("Filtrer par AM (Admin) :", liste_adh, key="adm_filter_am")
-            ids_adm = [dict_adh[n] for n in choix_adm] if choix_adm else list(dict_adh.values())
-            data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).execute()
-
-            data_adm_triee = trier_par_nom_puis_date(data_adm.data) if data_adm.data else []
-
-            if data_adm.data:
-                df_adm = pd.DataFrame([{
-                    "AM": f"{i['adherents']['prenom']} {i['adherents']['nom']}",
-                    "Date": i['ateliers']['date_atelier'],
-                    "Atelier": i['ateliers']['titre'],
-                    "Lieu": i['ateliers']['lieux']['nom'],
-                    "Horaire": i['ateliers']['horaires']['libelle'],
-                    "Enfants": i['nb_enfants']
-                } for i in data_adm_triee])
-            else:
-                df_adm = pd.DataFrame(columns=["AM", "Date", "Atelier", "Lieu", "Horaire", "Enfants"])
-
-            c_e3, c_e4 = st.columns(2)
-            c_e3.download_button("📥 Excel (Admin)", data=export_to_excel(df_adm), file_name="admin_suivi_am.xlsx")
-            c_e4.download_button("📥 PDF (Admin)", data=export_suivi_am_pdf("Suivi AM (Administration)", data_adm_triee), file_name="admin_suivi_am.pdf")
-
-            if data_adm.data:
-                curr = ""
-                for i in data_adm_triee:
-                    nom = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
-                    if nom != curr:
-                        st.markdown(f'<div style="color:#1b5e20; border-bottom:2px solid #1b5e20; padding-top:15px; margin-bottom:8px; font-weight:bold; font-size:1.2rem;">{nom}</div>', unsafe_allow_html=True)
-                        curr = nom
-                    at = i['ateliers']
-                    c_l = get_color(at['lieux']['nom'])
-                    badge_cat = badge_categorie(at)
-                    st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
-            else:
-                st.info("Aucune inscription trouvée pour les AM sélectionnées.")
+    with t2: # SUIVI AM (Admin)
+        choix_adm = st.multiselect("Filtrer par AM (Admin) :", liste_adh, key="adm_filter_am")
+        ids_adm = [dict_adh[n] for n in choix_adm] if choix_adm else list(dict_adh.values())
+        data_adm = supabase.table("inscriptions").select("*, ateliers!inner(*, lieux(nom), horaires(libelle)), adherents(nom, prenom)").in_("adherent_id", ids_adm).eq("ateliers.est_actif", True).execute()
+    
+        data_adm_triee = trier_par_nom_puis_date(data_adm.data) if data_adm.data else []
+    
+        if data_adm.data:
+            df_adm = pd.DataFrame([{
+                "AM": f"{i['adherents']['prenom']} {i['adherents']['nom']}",
+                "Date": i['ateliers']['date_atelier'],
+                "Atelier": i['ateliers']['titre'],
+                "Lieu": i['ateliers']['lieux']['nom'],
+                "Horaire": i['ateliers']['horaires']['libelle'],
+                "Enfants": i['nb_enfants']
+            } for i in data_adm_triee])
+        else:
+            df_adm = pd.DataFrame(columns=["AM", "Date", "Atelier", "Lieu", "Horaire", "Enfants"])
+    
+        c_e3, c_e4 = st.columns(2)
+        c_e3.download_button("📥 Excel (Admin)", data=export_to_excel(df_adm), file_name="admin_suivi_am.xlsx")
+        c_e4.download_button("📥 PDF (Admin)", data=export_suivi_am_pdf("Suivi AM (Administration)", data_adm_triee), file_name="admin_suivi_am.pdf")
+    
+        if data_adm.data:
+            curr = ""
+            for i in data_adm_triee:
+                nom = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
+                if nom != curr:
+                    st.markdown(f'<div style="color:#1b5e20; border-bottom:2px solid #1b5e20; padding-top:15px; margin-bottom:8px; font-weight:bold; font-size:1.2rem;">{nom}</div>', unsafe_allow_html=True)
+                    curr = nom
+                at = i['ateliers']
+                c_l = get_color(at['lieux']['nom'])
+                badge_cat = badge_categorie(at)
+                st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+        else:
+            st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
     with t3: # PLANNING ATELIERS (Admin)
         st.subheader("📅 Planning des Ateliers")
