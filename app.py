@@ -580,21 +580,51 @@ elif menu == "📊 Suivi & Récap":
         c_d1, c_d2 = st.columns(2)
         d_s = c_d1.date_input("Du", date.today(), key="pub_d1", format="DD/MM/YYYY")
         d_e = c_d2.date_input("Au", d_s + timedelta(days=30), key="pub_d2", format="DD/MM/YYYY")
-        ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").eq("est_actif", True).gte("date_atelier", str(d_s)).lte("date_atelier", str(d_e)).order("date_atelier").execute()
-
-        # --- OPTIMISATION : une seule requête pour toutes les inscriptions de la période ---
+        
+        ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)") \
+              .eq("est_actif", True) \
+              .gte("date_atelier", str(d_s)) \
+              .lte("date_atelier", str(d_e)) \
+              .order("date_atelier").execute()
+        
+        # Préparation des données pour exports
         all_ins_data = []
         cache_ins = {}
         if ats_raw.data:
-            for index, a in enumerate(ats_raw.data):
+            at_ids_pub = [a['id'] for a in ats_raw.data]
+            all_ins_pub = supabase.table("inscriptions").select("*, adherents(nom, prenom)").in_("atelier_id", at_ids_pub).execute()
+            for ins in all_ins_pub.data:
+                cache_ins.setdefault(ins['atelier_id'], []).append(ins)
+            for a in ats_raw.data:
+                for p in cache_ins.get(a['id'], []):
+                    all_ins_data.append({
+                        "Date": a['date_atelier'],
+                        "Atelier": a['titre'],
+                        "Lieu": a['lieux']['nom'],
+                        "Horaire": a['horaires']['libelle'],
+                        "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}",
+                        "Enfants": p['nb_enfants']
+                    })
+        
+        # Exports
+        df_at_exp = pd.DataFrame(all_ins_data) if all_ins_data else pd.DataFrame(columns=["Date", "Atelier", "Lieu", "Horaire", "AM", "Enfants"])
+        ce1, ce2 = st.columns(2)
+        ce1.download_button("📥 Excel Planning", data=export_to_excel(df_at_exp), file_name="planning_ateliers.xlsx", key="exp_at_xl")
+        ce2.download_button("📥 PDF Planning", data=export_planning_ateliers_pdf(
+            "Planning des Ateliers", ats_raw.data if ats_raw.data else [], lambda aid: cache_ins.get(aid, [])
+        ), file_name="planning_ateliers.pdf", key="exp_at_pdf")
+        
+        # Affichage écran (UNIQUE)
+        if ats_raw.data:
+            for idx, a in enumerate(ats_raw.data):
                 c_l = get_color(a['lieux']['nom'])
                 ins_at = cache_ins.get(a['id'], [])
-                t_ad, t_en = len(ins_at), sum([p['nb_enfants'] for p in ins_at])
+                t_ad, t_en = len(ins_at), sum(p['nb_enfants'] for p in ins_at)
                 restantes = a['capacite_max'] - (t_ad + t_en)
                 cl_c = "alerte-complet" if restantes <= 0 else ""
                 badge_cat = badge_categorie(a)
                 
-                # Affichage sur plusieurs lignes si nécessaire
+                # Ligne unique avec retour à la ligne automatique
                 st.markdown(
                     f"""
                     <div style="white-space: normal; word-wrap: break-word; margin-bottom: 5px;">
@@ -608,46 +638,16 @@ elif menu == "📊 Suivi & Récap":
                     """,
                     unsafe_allow_html=True
                 )
-        
-        if ins_at:
-            ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
-            html = "<div class='container-inscrits'>"
-            for p in ins_s:
-                html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
-            st.markdown(html + "</div>", unsafe_allow_html=True)
-        
-        if index < len(ats_raw.data) - 1:
-            st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
-
-        # Export Excel planning (toujours disponible)
-        if all_ins_data:
-            df_at_exp = pd.DataFrame(all_ins_data)
-        else:
-            df_at_exp = pd.DataFrame(columns=["Date", "Atelier", "Lieu", "Horaire", "AM", "Enfants"])
-
-        ce1, ce2 = st.columns(2)
-        ce1.download_button("📥 Excel Planning", data=export_to_excel(df_at_exp), file_name="planning_ateliers.xlsx", key="exp_at_xl")
-        # PDF mis en forme planning par atelier (toujours disponible)
-        ce2.download_button("📥 PDF Planning", data=export_planning_ateliers_pdf(
-            "Planning des Ateliers", ats_raw.data if ats_raw.data else [], lambda aid: cache_ins.get(aid, [])
-        ), file_name="planning_ateliers.pdf", key="exp_at_pdf")
-
-        # Affichage écran (avec titre entre date et lieu)
-        if ats_raw.data:
-            for index, a in enumerate(ats_raw.data):
-                c_l = get_color(a['lieux']['nom'])
-                ins_at = cache_ins.get(a['id'], [])
-                t_ad, t_en = len(ins_at), sum([p['nb_enfants'] for p in ins_at])
-                restantes = a['capacite_max'] - (t_ad + t_en)
-                cl_c = "alerte-complet" if restantes <= 0 else ""
-                badge_cat = badge_categorie(a)
-                st.markdown(f"{badge_cat}**{format_date_fr_complete(a['date_atelier'])}** | {a['titre']} | <span class='lieu-badge' style='background-color:{c_l}'>{a['lieux']['nom']}</span> | ...", unsafe_allow_html=True)
+                
                 if ins_at:
                     ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
                     html = "<div class='container-inscrits'>"
-                    for p in ins_s: html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
+                    for p in ins_s:
+                        html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
                     st.markdown(html + "</div>", unsafe_allow_html=True)
-                if index < len(ats_raw.data) - 1: st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
+                
+                if idx < len(ats_raw.data) - 1:
+                    st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
         else:
             st.info("Aucun atelier trouvé sur cette période.")
 
