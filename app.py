@@ -558,7 +558,8 @@ elif menu == "📊 Suivi & Récap":
                     curr_u = nom_u
                 at = i['ateliers']
                 c_l = get_color(at['lieux']['nom'])
-                st.write(f"{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+                badge_cat = badge_categorie(at)
+                st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
         else:
             st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
