@@ -738,6 +738,7 @@ elif menu == "🔐 Administration":
                       .gte("date_atelier", str(fs)).lte("date_atelier", str(fe)) \
                       .order("date_atelier").execute().data
                 
+                # --- Affichage de la liste des ateliers ---
                 for a in rep:
                     if ft == "Actifs" and not a['est_actif']:
                         continue
@@ -748,9 +749,8 @@ elif menu == "🔐 Administration":
                     badge_actif = '<span style="background-color:#2ecc71; color:white; padding:2px 6px; border-radius:12px; font-size:0.75rem; margin-right:8px;">Actif</span>' if a['est_actif'] else '<span style="background-color:#e74c3c; color:white; padding:2px 6px; border-radius:12px; font-size:0.75rem; margin-right:8px;">Inactif</span>'
                     
                     # Badge catégorie (couleur personnalisée)
-                    # Badge catégorie : s'il existe une couleur, on l'affiche ; sinon on affiche un badge gris cliquable
                     if a.get('categorie_color'):
-                        badge_cat = badge_categorie(a)   # la fonction renvoie le cercle coloré
+                        badge_cat = f'<span style="background-color:{a["categorie_color"]}; width:14px; height:14px; display:inline-block; border-radius:50%; margin-right:6px;"></span>'
                     else:
                         badge_cat = '<span style="background-color:#cccccc; width:14px; height:14px; display:inline-block; border-radius:50%; margin-right:6px;" title="Cliquer sur 🎨 pour définir une couleur"></span>'
                     
@@ -758,51 +758,55 @@ elif menu == "🔐 Administration":
                     c_lieu = get_color(a['lieux']['nom'])
                     lieu_badge = f'<span class="lieu-badge" style="background-color:{c_lieu};">{a["lieux"]["nom"]}</span>'
                     
-                    # Date formatée
                     date_str = format_date_fr_complete(a['date_atelier'])
                     horaire_str = a['horaires']['libelle']
                     titre_str = a['titre']
                     verrou_icon = " 🔒" if is_verrouille(a) else ""
                     
-                    # Colonnes pour les boutons
                     ca, cb, cc, cd, ce, cf_col = st.columns([0.45, 0.10, 0.10, 0.10, 0.10, 0.15])
                     ca.markdown(f"{badge_cat}{badge_actif}**{date_str}** | {horaire_str} | {titre_str} | {lieu_badge}{verrou_icon}", unsafe_allow_html=True)
                     
+                    # Bouton Activer/Désactiver
                     btn_l = "🔴 Désactiver" if a['est_actif'] else "🟢 Activer"
                     if cb.button(btn_l, key=f"at_stat_{a['id']}"):
                         supabase.table("ateliers").update({"est_actif": not a['est_actif']}).eq("id", a['id']).execute()
                         st.rerun()
                     
+                    # Bouton Verrouiller/Déverrouiller
                     btn_v = "🔓 Déverrouiller" if is_verrouille(a) else "🔒 Verrouiller"
                     if cc.button(btn_v, key=f"at_verr_{a['id']}"):
                         nouvel_etat = not is_verrouille(a)
                         supabase.table("ateliers").update({"Verrouille": bool(nouvel_etat)}).eq("id", a['id']).execute()
-                        etat_str = "verrouillé" if nouvel_etat else "déverrouillé"
-                        enregistrer_log("Admin", "Verrouillage atelier", f"Atelier '{a['titre']}' du {a['date_atelier']} {etat_str}")
+                        enregistrer_log("Admin", "Verrouillage atelier", f"Atelier '{a['titre']}' du {a['date_atelier']} {'verrouillé' if nouvel_etat else 'déverrouillé'}")
                         st.rerun()
                     
+                    # Bouton Modifier
                     if cd.button("✏️", key=f"at_edit_{a['id']}"):
                         edit_atelier_dialog(a['id'], a['titre'], a['lieu_id'], a['horaire_id'], a['capacite_max'], l_raw, h_raw, map_l_id, map_h_id)
                     
-                    # Bouton pour choisir la couleur du badge de catégorie
+                    # Bouton 🎨 Choisir la couleur
                     if ce.button("🎨", key=f"at_color_{a['id']}"):
                         st.session_state['color_atelier_id'] = a['id']
                         st.session_state['color_current'] = a.get('categorie_color', '#000000')
                         st.rerun()
                     
+                    # Bouton Supprimer
                     if cf_col.button("🗑️", key=f"at_del_{a['id']}"):
                         cnt = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", a['id']).execute().count
                         delete_atelier_dialog(a['id'], a['titre'], (cnt if cnt else 0) > 0, current_code)
                 
-                # Dialogue de choix de couleur (hors boucle, après l'affichage de tous les ateliers)
+                # --- DIALOGUE DE CHOIX DE COULEUR (placé APRÈS la boucle, dans le même bloc) ---
                 if 'color_atelier_id' in st.session_state:
                     with st.dialog("Choisir la couleur du badge"):
+                        st.write(f"Atelier n°{st.session_state['color_atelier_id']}")
                         new_color = st.color_picker("Couleur", st.session_state['color_current'])
                         col1, col2 = st.columns(2)
                         if col1.button("Enregistrer", type="primary"):
                             supabase.table("ateliers").update({"categorie_color": new_color}).eq("id", st.session_state['color_atelier_id']).execute()
+                            # Nettoyer la session et vider le cache
                             del st.session_state['color_atelier_id']
                             del st.session_state['color_current']
+                            st.cache_data.clear()
                             st.rerun()
                         if col2.button("Annuler"):
                             del st.session_state['color_atelier_id']
