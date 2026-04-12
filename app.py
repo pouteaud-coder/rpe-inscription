@@ -452,7 +452,7 @@ if menu == "📝 Inscriptions":
 
     if user_principal != "Choisir...":
         today_str = str(date.today())
-        res_at = supabase.table("ateliers").select("*, categorie_color, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
+        res_at = supabase.table("ateliers").select("*, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
 
         # --- OPTIMISATION : chargement groupé de toutes les inscriptions en une seule requête ---
         if res_at.data:
