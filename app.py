@@ -442,8 +442,9 @@ res_adh = _DataWrapper(res_adh_data)
 # --- NAVIGATION ---
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "📊 Suivi & Récap", "🔐 Administration"])
 
+
 # ==========================================
-# SECTION 📝 INSCRIPTIONS (inchangée)
+# SECTION 📝 INSCRIPTIONS (modifiée)
 # ==========================================
 if menu == "📝 Inscriptions":
     st.header("📍 Inscriptions")
@@ -471,12 +472,15 @@ if menu == "📝 Inscriptions":
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"
 
-            verrou_badge = " 🔒 <span class='badge-verrouille'>Inscription uniquement par l'admin</span>" if is_verrouille(at) else ""
-            badge_cat = badge_categorie(at)
-            badge_actif = ""  # Pas besoin dans cette vue, mais on garde pour cohérence
-            titre_label = f"{badge_cat}{format_date_fr_complete(at['date_atelier'])} — {at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
+            # Label sans date ni badge
+            titre_label = f"{at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
 
             with st.expander(titre_label):
+                # Affichage du badge et de la date à l'intérieur
+                badge_cat = badge_categorie(at)
+                st.markdown(f"{badge_cat} **{format_date_fr_complete(at['date_atelier'])}**", unsafe_allow_html=True)
+                st.markdown("---")
+
                 if is_verrouille(at):
                     st.warning("🔒 Cet atelier est géré par l'administration. Les inscriptions et désinscriptions ne sont pas disponibles ici.")
 
@@ -493,8 +497,10 @@ if menu == "📝 Inscriptions":
 
                 if not is_verrouille(at):
                     st.markdown("---")
-                    try: idx_def = (liste_adh.index(user_principal) + 1)
-                    except: idx_def = 0
+                    try:
+                        idx_def = (liste_adh.index(user_principal) + 1)
+                    except:
+                        idx_def = 0
                     c1, c2, c3 = st.columns([2, 1, 1])
                     qui = c1.selectbox("Qui ?", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
                     nb_e = c2.number_input("Enfants", 1, 10, 1, key=f"e_{at['id']}")
@@ -504,13 +510,15 @@ if menu == "📝 Inscriptions":
                             id_adh = dict_adh[qui]
                             existing = next((ins for ins in res_ins_data if ins['adherent_id'] == id_adh), None)
                             if existing:
-                                if restantes - (nb_e - existing['nb_enfants']) < 0: st.error("Manque de places")
+                                if restantes - (nb_e - existing['nb_enfants']) < 0:
+                                    st.error("Manque de places")
                                 else:
                                     supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
                                     enregistrer_log(user_principal, "Modification", f"{qui} change à {nb_e} enfants - {at_info_log}")
                                     st.rerun()
                             else:
-                                if restantes - (1 + nb_e) < 0: st.error("Manque de places")
+                                if restantes - (1 + nb_e) < 0:
+                                    st.error("Manque de places")
                                 else:
                                     supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
                                     enregistrer_log(user_principal, "Inscription", f"{qui} s'inscrit (+{nb_e} enf.) - {at_info_log}")
