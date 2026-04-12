@@ -664,14 +664,16 @@ elif menu == "🔐 Administration":
                             lieu_val = lieu_par_defaut if lieu_par_defaut else ""
                             horaire_val = horaire_par_defaut if horaire_par_defaut else ""
                             capa = map_l_cap.get(lieu_val, 10) if lieu_val else 10
-                            tmp.append({
-                                "Date": format_date_fr_complete(curr, False), 
-                                "Titre": "", 
-                                "Lieu": lieu_val, 
-                                "Horaire": horaire_val, 
-                                "Capacité": capa, 
-                                "Actif": False,   # ← MODIFICATION : par défaut inactif
-                                "Verrouillé": False
+                    to_db.append({
+                        "date_atelier": date_iso,
+                        "titre": r['Titre'],
+                        "lieu_id": map_l_id[lieu_nom],
+                        "horaire_id": map_h_id[horaire_lib],
+                        "capacite_max": int(r['Capacité']),
+                        "est_actif": bool(r['Actif']),
+                        "Verrouille": bool(r.get("Verrouillé", False)),
+                        "categorie_color": "#3498db"   # ← bleu par défaut
+                    })
                             })
                         curr += timedelta(days=1)
                     st.session_state['at_list_gen'] = tmp
