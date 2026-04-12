@@ -586,17 +586,38 @@ elif menu == "📊 Suivi & Récap":
         all_ins_data = []
         cache_ins = {}
         if ats_raw.data:
-            at_ids_pub = [a['id'] for a in ats_raw.data]
-            all_ins_pub = supabase.table("inscriptions").select("*, adherents(nom, prenom)").in_("atelier_id", at_ids_pub).execute()
-            for ins in all_ins_pub.data:
-                cache_ins.setdefault(ins['atelier_id'], []).append(ins)
-            for a in ats_raw.data:
-                for p in cache_ins.get(a['id'], []):
-                    all_ins_data.append({
-                        "Date": a['date_atelier'], "Atelier": a['titre'], "Lieu": a['lieux']['nom'],
-                        "Horaire": a['horaires']['libelle'],
-                        "AM": f"{p['adherents']['prenom']} {p['adherents']['nom']}", "Enfants": p['nb_enfants']
-                    })
+            for index, a in enumerate(ats_raw.data):
+                c_l = get_color(a['lieux']['nom'])
+                ins_at = cache_ins.get(a['id'], [])
+                t_ad, t_en = len(ins_at), sum([p['nb_enfants'] for p in ins_at])
+                restantes = a['capacite_max'] - (t_ad + t_en)
+                cl_c = "alerte-complet" if restantes <= 0 else ""
+                badge_cat = badge_categorie(a)
+                
+                # Affichage sur plusieurs lignes si nécessaire
+                st.markdown(
+                    f"""
+                    <div style="white-space: normal; word-wrap: break-word; margin-bottom: 5px;">
+                        {badge_cat}<strong>{format_date_fr_complete(a['date_atelier'])}</strong> | {a['titre']} | 
+                        <span class='lieu-badge' style='background-color:{c_l};'>{a['lieux']['nom']}</span> | 
+                        <span class='horaire-text'>{a['horaires']['libelle']}</span>
+                        <span class='compteur-badge'>👤 {t_ad} AM</span>
+                        <span class='compteur-badge'>👶 {t_en} enf.</span>
+                        <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+        
+        if ins_at:
+            ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
+            html = "<div class='container-inscrits'>"
+            for p in ins_s:
+                html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
+            st.markdown(html + "</div>", unsafe_allow_html=True)
+        
+        if index < len(ats_raw.data) - 1:
+            st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
 
         # Export Excel planning (toujours disponible)
         if all_ins_data:
