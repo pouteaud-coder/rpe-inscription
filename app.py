@@ -470,7 +470,14 @@ if menu == "📝 Inscriptions":
             restantes = at['capacite_max'] - total_occ
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"
-
+        
+            # --- Vérifier si l'utilisateur courant est déjà inscrit ---
+            user_id = dict_adh.get(user_principal)  # user_principal est le nom complet sélectionné
+            est_inscrit = any(ins['adherent_id'] == user_id for ins in res_ins_data) if user_id else False
+            if est_inscrit:
+                # Ajout d'une coche violette après le statut des places
+                statut_p += " <span style='color: #9b59b6; font-weight: bold; margin-left: 6px;'>✔️ Inscrite</span>"
+            
             # Ligne d'en-tête avec badge, date, titre, lieu, horaire, places
             badge_cat = badge_categorie(at)
             ligne_entete = f"{badge_cat} **{format_date_fr_complete(at['date_atelier'])}** — {at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
