@@ -195,13 +195,12 @@ def trier_par_nom_puis_date(data):
     ))
 
 def badge_categorie(at):
-    """Retourne un span HTML pour le badge de catégorie, ou un badge gris par défaut."""
+    """Retourne un span HTML pour le badge de catégorie, ou une chaîne vide si pas de couleur."""
     color = at.get('categorie_color')
     if color and isinstance(color, str) and color.strip():
         return f'<span style="background-color:{color}; width:14px; height:14px; display:inline-block; border-radius:50%; margin-right:6px;"></span>'
-    else:
-        # Badge gris clair par défaut (pour montrer l'emplacement)
-        return f'<span style="background-color:#cccccc; width:14px; height:14px; display:inline-block; border-radius:50%; margin-right:6px;" title="Cliquer sur 🎨 pour définir une couleur"></span>'
+    return ""   # ← pas de badge gris
+    
 
 # --- FONCTIONS D'EXPORT (inchangées) ---
 def export_to_excel(df):
