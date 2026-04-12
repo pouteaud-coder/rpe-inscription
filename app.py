@@ -795,23 +795,22 @@ elif menu == "🔐 Administration":
                         cnt = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", a['id']).execute().count
                         delete_atelier_dialog(a['id'], a['titre'], (cnt if cnt else 0) > 0, current_code)
                 
-                # --- DIALOGUE DE CHOIX DE COULEUR (placé APRÈS la boucle, dans le même bloc) ---
-                if 'color_atelier_id' in st.session_state:
-                    with st.dialog("Choisir la couleur du badge"):
-                        st.write(f"Atelier n°{st.session_state['color_atelier_id']}")
-                        new_color = st.color_picker("Couleur", st.session_state['color_current'])
-                        col1, col2 = st.columns(2)
-                        if col1.button("Enregistrer", type="primary"):
-                            supabase.table("ateliers").update({"categorie_color": new_color}).eq("id", st.session_state['color_atelier_id']).execute()
-                            # Nettoyer la session et vider le cache
-                            del st.session_state['color_atelier_id']
-                            del st.session_state['color_current']
-                            st.cache_data.clear()
-                            st.rerun()
-                        if col2.button("Annuler"):
-                            del st.session_state['color_atelier_id']
-                            del st.session_state['color_current']
-                            st.rerun()
+                    # --- DIALOGUE DE CHOIX DE COULEUR (avec expander, compatible toutes versions) ---
+                    if 'color_atelier_id' in st.session_state:
+                        with st.expander("🎨 Choisir la couleur du badge", expanded=True):
+                            st.write(f"Atelier n°{st.session_state['color_atelier_id']}")
+                            new_color = st.color_picker("Couleur", st.session_state['color_current'])
+                            col1, col2 = st.columns(2)
+                            if col1.button("Enregistrer", type="primary"):
+                                supabase.table("ateliers").update({"categorie_color": new_color}).eq("id", st.session_state['color_atelier_id']).execute()
+                                del st.session_state['color_atelier_id']
+                                del st.session_state['color_current']
+                                st.cache_data.clear()
+                                st.rerun()
+                            if col2.button("Annuler"):
+                                del st.session_state['color_atelier_id']
+                                del st.session_state['color_current']
+                                st.rerun()
 
             elif sub == "Actions groupées":
                 with st.form("bulk_form"):
