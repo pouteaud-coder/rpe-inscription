@@ -784,11 +784,25 @@ elif menu == "🔐 Administration":
                     if cd.button("✏️", key=f"at_edit_{a['id']}"):
                         edit_atelier_dialog(a['id'], a['titre'], a['lieu_id'], a['horaire_id'], a['capacite_max'], l_raw, h_raw, map_l_id, map_h_id)
                     
-                    # Bouton 🎨 Choisir la couleur
-                    if ce.button("🎨", key=f"at_color_{a['id']}"):
-                        st.session_state['color_atelier_id'] = a['id']
-                        st.session_state['color_current'] = a.get('categorie_color', '#000000')
-                        st.rerun()
+                    # Gestion locale de la couleur
+                    color_key = f"color_mode_{a['id']}"
+                    if st.session_state.get(color_key, False):
+                        # Afficher le color picker et les boutons
+                        new_color = st.color_picker("Couleur", a.get('categorie_color', '#000000'), key=f"color_picker_{a['id']}")
+                        col_ok, col_cancel = st.columns(2)
+                        if col_ok.button("✅ Enregistrer", key=f"save_color_{a['id']}"):
+                            supabase.table("ateliers").update({"categorie_color": new_color}).eq("id", a['id']).execute()
+                            st.session_state[color_key] = False
+                            st.cache_data.clear()
+                            st.rerun()
+                        if col_cancel.button("❌ Annuler", key=f"cancel_color_{a['id']}"):
+                            st.session_state[color_key] = False
+                            st.rerun()
+                    else:
+                        # Bouton pour ouvrir le sélecteur
+                        if ce.button("🎨", key=f"at_color_{a['id']}"):
+                            st.session_state[color_key] = True
+                            st.rerun()
                     
                     # Bouton Supprimer
                     if cf_col.button("🗑️", key=f"at_del_{a['id']}"):
