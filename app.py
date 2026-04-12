@@ -445,7 +445,7 @@ menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "📊 Suivi & Récap
 
 
 # ==========================================
-# SECTION 📝 INSCRIPTIONS (version avec en-tête et expander)
+# SECTION 📝 INSCRIPTIONS (avec modification du nb enfants)
 # ==========================================
 if menu == "📝 Inscriptions":
     st.header("📍 Inscriptions")
@@ -471,45 +471,56 @@ if menu == "📝 Inscriptions":
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"
 
-            # Badge + date + titre + lieu + horaire + statut sur une même ligne
+            # Ligne d'en-tête avec badge, date, titre, lieu, horaire, places
             badge_cat = badge_categorie(at)
             ligne_entete = f"{badge_cat} **{format_date_fr_complete(at['date_atelier'])}** — {at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
             st.markdown(ligne_entete, unsafe_allow_html=True)
 
-            # Expander pour le détail des inscriptions
-            with st.expander("📋 Voir les inscriptions et s'inscrire"):
+            # Expander pour la gestion des inscriptions
+            with st.expander("📋 Gérer les inscriptions"):
                 if is_verrouille(at):
-                    st.warning("🔒 Cet atelier est géré par l'administration. Les inscriptions et désinscriptions ne sont pas disponibles ici.")
-
-                if res_ins_data:
+                    st.warning("🔒 Cet atelier est verrouillé par l'administration. Seul l'admin peut modifier les inscriptions.")
+                    # Affichage simple des inscrits
                     for i in res_ins_data:
                         n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
-                        if is_verrouille(at):
-                            st.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
-                        else:
-                            c_nom, c_poub = st.columns([0.88, 0.12])
-                            c_nom.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
-                            if c_poub.button("🗑️", key=f"del_{i['id']}"):
+                        st.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
+                else:
+                    # Affichage des inscrits avec modification possible
+                    if res_ins_data:
+                        for i in res_ins_data:
+                            n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
+                            col_nom, col_nb, col_mod, col_del = st.columns([0.5, 0.2, 0.15, 0.15])
+                            col_nom.write(f"• {n_f}")
+                            nouveau_nb = col_nb.number_input("Enf.", min_value=1, max_value=10, value=i['nb_enfants'], key=f"nb_{i['id']}", label_visibility="collapsed")
+                            if col_mod.button("✏️ Modifier", key=f"mod_{i['id']}"):
+                                delta = nouveau_nb - i['nb_enfants']
+                                if restantes - delta < 0:
+                                    st.error("Manque de places")
+                                else:
+                                    supabase.table("inscriptions").update({"nb_enfants": nouveau_nb}).eq("id", i['id']).execute()
+                                    enregistrer_log(user_principal, "Modification", f"{n_f} change à {nouveau_nb} enfants - {at_info_log}")
+                                    st.rerun()
+                            if col_del.button("🗑️", key=f"del_{i['id']}"):
                                 confirm_unsubscribe_dialog(i['id'], n_f, at_info_log, user_principal)
+                    else:
+                        st.info("Aucune inscription pour cet atelier.")
 
-                if not is_verrouille(at):
+                    # Formulaire d'ajout d'une nouvelle inscription
                     st.markdown("---")
-                    try: idx_def = (liste_adh.index(user_principal) + 1)
-                    except: idx_def = 0
+                    st.markdown("**➕ Ajouter une inscription**")
+                    try:
+                        idx_def = (liste_adh.index(user_principal) + 1)
+                    except:
+                        idx_def = 0
                     c1, c2, c3 = st.columns([2, 1, 1])
-                    qui = c1.selectbox("Qui ?", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
-                    nb_e = c2.number_input("Enfants", 1, 10, 1, key=f"e_{at['id']}")
-                    if c3.button("Valider", key=f"v_{at['id']}", type="primary"):
+                    qui = c1.selectbox("Assistante maternelle", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
+                    nb_e = c2.number_input("Nombre d'enfants", min_value=1, max_value=10, value=1, key=f"e_{at['id']}")
+                    if c3.button("Valider l'inscription", key=f"v_{at['id']}", type="primary"):
                         if qui != "Choisir...":
                             id_adh = dict_adh[qui]
                             existing = next((ins for ins in res_ins_data if ins['adherent_id'] == id_adh), None)
                             if existing:
-                                if restantes - (nb_e - existing['nb_enfants']) < 0:
-                                    st.error("Manque de places")
-                                else:
-                                    supabase.table("inscriptions").update({"nb_enfants": nb_e}).eq("id", existing['id']).execute()
-                                    enregistrer_log(user_principal, "Modification", f"{qui} change à {nb_e} enfants - {at_info_log}")
-                                    st.rerun()
+                                st.warning(f"{qui} est déjà inscrite à cet atelier. Utilisez le bouton Modifier pour changer le nombre d'enfants.")
                             else:
                                 if restantes - (1 + nb_e) < 0:
                                     st.error("Manque de places")
