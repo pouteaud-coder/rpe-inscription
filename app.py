@@ -748,7 +748,11 @@ elif menu == "🔐 Administration":
                     badge_actif = '<span style="background-color:#2ecc71; color:white; padding:2px 6px; border-radius:12px; font-size:0.75rem; margin-right:8px;">Actif</span>' if a['est_actif'] else '<span style="background-color:#e74c3c; color:white; padding:2px 6px; border-radius:12px; font-size:0.75rem; margin-right:8px;">Inactif</span>'
                     
                     # Badge catégorie (couleur personnalisée)
-                    badge_cat = badge_categorie(a)   # fonction définie plus haut
+                    # Badge catégorie : s'il existe une couleur, on l'affiche ; sinon on affiche un badge gris cliquable
+                    if a.get('categorie_color'):
+                        badge_cat = badge_categorie(a)   # la fonction renvoie le cercle coloré
+                    else:
+                        badge_cat = '<span style="background-color:#cccccc; width:14px; height:14px; display:inline-block; border-radius:50%; margin-right:6px;" title="Cliquer sur 🎨 pour définir une couleur"></span>'
                     
                     # Lieu en couleur
                     c_lieu = get_color(a['lieux']['nom'])
