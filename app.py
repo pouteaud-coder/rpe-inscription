@@ -443,8 +443,9 @@ res_adh = _DataWrapper(res_adh_data)
 menu = st.sidebar.radio("Navigation", ["📝 Inscriptions", "📊 Suivi & Récap", "🔐 Administration"])
 
 
+
 # ==========================================
-# SECTION 📝 INSCRIPTIONS (modifiée)
+# SECTION 📝 INSCRIPTIONS (version avec en-tête et expander)
 # ==========================================
 if menu == "📝 Inscriptions":
     st.header("📍 Inscriptions")
@@ -454,11 +455,9 @@ if menu == "📝 Inscriptions":
         today_str = str(date.today())
         res_at = supabase.table("ateliers").select("*, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
 
-        # --- OPTIMISATION : chargement groupé de toutes les inscriptions en une seule requête ---
         if res_at.data:
             at_ids = [at['id'] for at in res_at.data]
             all_ins_raw = supabase.table("inscriptions").select("*, adherents(nom, prenom)").in_("atelier_id", at_ids).execute()
-            # Index par atelier_id pour accès O(1)
             ins_by_atelier = {}
             for ins in all_ins_raw.data:
                 ins_by_atelier.setdefault(ins['atelier_id'], []).append(ins)
@@ -472,15 +471,13 @@ if menu == "📝 Inscriptions":
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
             at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"
 
-            # Label sans date ni badge
-            titre_label = f"{at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
+            # Badge + date + titre + lieu + horaire + statut sur une même ligne
+            badge_cat = badge_categorie(at)
+            ligne_entete = f"{badge_cat} **{format_date_fr_complete(at['date_atelier'])}** — {at['titre']} | 📍 {at['lieux']['nom']} | ⏰ {at['horaires']['libelle']} | {statut_p}"
+            st.markdown(ligne_entete, unsafe_allow_html=True)
 
-            with st.expander(titre_label):
-                # Affichage du badge et de la date à l'intérieur
-                badge_cat = badge_categorie(at)
-                st.markdown(f"{badge_cat} **{format_date_fr_complete(at['date_atelier'])}**", unsafe_allow_html=True)
-                st.markdown("---")
-
+            # Expander pour le détail des inscriptions
+            with st.expander("📋 Voir les inscriptions et s'inscrire"):
                 if is_verrouille(at):
                     st.warning("🔒 Cet atelier est géré par l'administration. Les inscriptions et désinscriptions ne sont pas disponibles ici.")
 
@@ -497,14 +494,11 @@ if menu == "📝 Inscriptions":
 
                 if not is_verrouille(at):
                     st.markdown("---")
-                    try:
-                        idx_def = (liste_adh.index(user_principal) + 1)
-                    except:
-                        idx_def = 0
+                    try: idx_def = (liste_adh.index(user_principal) + 1)
+                    except: idx_def = 0
                     c1, c2, c3 = st.columns([2, 1, 1])
                     qui = c1.selectbox("Qui ?", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
                     nb_e = c2.number_input("Enfants", 1, 10, 1, key=f"e_{at['id']}")
-
                     if c3.button("Valider", key=f"v_{at['id']}", type="primary"):
                         if qui != "Choisir...":
                             id_adh = dict_adh[qui]
