@@ -795,19 +795,20 @@ elif menu == "🔐 Administration":
                         cnt = supabase.table("inscriptions").select("id", count="exact").eq("atelier_id", a['id']).execute().count
                         delete_atelier_dialog(a['id'], a['titre'], (cnt if cnt else 0) > 0, current_code)
                 
-                    # --- DIALOGUE DE CHOIX DE COULEUR (avec expander, compatible toutes versions) ---
+                    # --- DIALOGUE DE CHOIX DE COULEUR (avec expander et clés uniques) ---
                     if 'color_atelier_id' in st.session_state:
+                        at_id = st.session_state['color_atelier_id']
                         with st.expander("🎨 Choisir la couleur du badge", expanded=True):
-                            st.write(f"Atelier n°{st.session_state['color_atelier_id']}")
-                            new_color = st.color_picker("Couleur", st.session_state['color_current'])
+                            st.write(f"Atelier n°{at_id}")
+                            new_color = st.color_picker("Couleur", st.session_state['color_current'], key=f"color_picker_{at_id}")
                             col1, col2 = st.columns(2)
-                            if col1.button("Enregistrer", type="primary"):
-                                supabase.table("ateliers").update({"categorie_color": new_color}).eq("id", st.session_state['color_atelier_id']).execute()
+                            if col1.button("Enregistrer", type="primary", key=f"save_color_{at_id}"):
+                                supabase.table("ateliers").update({"categorie_color": new_color}).eq("id", at_id).execute()
                                 del st.session_state['color_atelier_id']
                                 del st.session_state['color_current']
                                 st.cache_data.clear()
                                 st.rerun()
-                            if col2.button("Annuler"):
+                            if col2.button("Annuler", key=f"cancel_color_{at_id}"):
                                 del st.session_state['color_atelier_id']
                                 del st.session_state['color_current']
                                 st.rerun()
