@@ -195,11 +195,13 @@ def trier_par_nom_puis_date(data):
     ))
 
 def badge_categorie(at):
-    """Retourne un span HTML pour le badge de catégorie, ou une chaîne vide si pas de couleur."""
+    """Retourne un span HTML pour le badge de catégorie, ou un badge gris par défaut."""
     color = at.get('categorie_color')
     if color and isinstance(color, str) and color.strip():
         return f'<span style="background-color:{color}; width:14px; height:14px; display:inline-block; border-radius:50%; margin-right:6px;"></span>'
-    return ""
+    else:
+        # Badge gris clair par défaut (pour montrer l'emplacement)
+        return f'<span style="background-color:#cccccc; width:14px; height:14px; display:inline-block; border-radius:50%; margin-right:6px;" title="Cliquer sur 🎨 pour définir une couleur"></span>'
 
 # --- FONCTIONS D'EXPORT (inchangées) ---
 def export_to_excel(df):
@@ -450,7 +452,7 @@ if menu == "📝 Inscriptions":
 
     if user_principal != "Choisir...":
         today_str = str(date.today())
-        res_at = supabase.table("ateliers").select("*, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
+        res_at = supabase.table("ateliers").select("*, categorie_color, lieux(nom, capacite_accueil), horaires(libelle)").eq("est_actif", True).gte("date_atelier", today_str).order("date_atelier").execute()
 
         # --- OPTIMISATION : chargement groupé de toutes les inscriptions en une seule requête ---
         if res_at.data:
