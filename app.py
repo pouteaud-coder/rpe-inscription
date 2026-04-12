@@ -639,96 +639,95 @@ elif menu == "🔐 Administration":
             map_l_id = {l['nom']: l['id'] for l in l_raw}; map_h_id = {h['libelle']: h['id'] for h in h_raw}
             sub = st.radio("Mode", ["Générateur", "Répertoire", "Actions groupées"], horizontal=True)
 
-            if sub == "Générateur":
-                # Sélection du lieu et horaire par défaut avant génération
-                col_lieu, col_horaire = st.columns(2)
-                with col_lieu:
-                    lieu_par_defaut = st.selectbox("Lieu par défaut pour les nouvelles lignes :", 
-                                                   options=[""] + l_list, 
-                                                   help="Choisissez un lieu qui sera prérempli dans chaque ligne générée. Si vide, le champ sera laissé vide.")
-                with col_horaire:
-                    horaire_par_defaut = st.selectbox("Horaire par défaut pour les nouvelles lignes :", 
-                                                      options=[""] + h_list,
-                                                      help="Choisissez un horaire qui sera prérempli dans chaque ligne générée. Si vide, le champ sera laissé vide.")
+if sub == "Générateur":
+    # Sélection du lieu et horaire par défaut avant génération
+    col_lieu, col_horaire = st.columns(2)
+    with col_lieu:
+        lieu_par_defaut = st.selectbox("Lieu par défaut pour les nouvelles lignes :", 
+                                       options=[""] + l_list, 
+                                       help="Choisissez un lieu qui sera prérempli dans chaque ligne générée. Si vide, le champ sera laissé vide.")
+    with col_horaire:
+        horaire_par_defaut = st.selectbox("Horaire par défaut pour les nouvelles lignes :", 
+                                          options=[""] + h_list,
+                                          help="Choisissez un horaire qui sera prérempli dans chaque ligne générée. Si vide, le champ sera laissé vide.")
+    
+    c1, c2 = st.columns(2)
+    d1 = c1.date_input("Début", date.today(), format="DD/MM/YYYY", key="gen_d1")
+    d2 = c2.date_input("Fin", date.today() + timedelta(days=7), format="DD/MM/YYYY", key="gen_d2")
+    jours = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
+    
+            if st.button("📊 Générer les lignes"):
+                tmp, curr = [], d1
+                while curr <= d2:
+                    js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+                    if js_fr[curr.weekday()] in jours:
+                        lieu_val = lieu_par_defaut if lieu_par_defaut else ""
+                        horaire_val = horaire_par_defaut if horaire_par_defaut else ""
+                        capa = map_l_cap.get(lieu_val, 10) if lieu_val else 10
+                        tmp.append({
+                            "Date": format_date_fr_complete(curr, False), 
+                            "Titre": "", 
+                            "Lieu": lieu_val, 
+                            "Horaire": horaire_val, 
+                            "Capacité": capa, 
+                            "Actif": False,
+                            "Verrouillé": False
+                        })
+                    curr += timedelta(days=1)
+                st.session_state['at_list_gen'] = tmp
+                st.rerun()
                 
-                c1, c2 = st.columns(2)
-                d1 = c1.date_input("Début", date.today(), format="DD/MM/YYYY", key="gen_d1")
-                d2 = c2.date_input("Fin", date.today() + timedelta(days=7), format="DD/MM/YYYY", key="gen_d2")
-                jours = st.multiselect("Jours", ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"], default=["Lundi", "Jeudi"])
-                
-                if st.button("📊 Générer les lignes"):
-                    tmp, curr = [], d1
-                    while curr <= d2:
-                        js_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-                        if js_fr[curr.weekday()] in jours:
-                            lieu_val = lieu_par_defaut if lieu_par_defaut else ""
-                            horaire_val = horaire_par_defaut if horaire_par_defaut else ""
-                            capa = map_l_cap.get(lieu_val, 10) if lieu_val else 10
-                    to_db.append({
-                        "date_atelier": date_iso,
-                        "titre": r['Titre'],
-                        "lieu_id": map_l_id[lieu_nom],
-                        "horaire_id": map_h_id[horaire_lib],
-                        "capacite_max": int(r['Capacité']),
-                        "est_actif": bool(r['Actif']),
-                        "Verrouille": bool(r.get("Verrouillé", False)),
-                        "categorie_color": "#3498db"   # ← bleu par défaut
-                    })
-                            })
-                        curr += timedelta(days=1)
-                    st.session_state['at_list_gen'] = tmp
-                    st.rerun()
-                    
-                if st.session_state['at_list_gen']:
-                    df_ed = st.data_editor(
-                        pd.DataFrame(st.session_state['at_list_gen']),
-                        num_rows="dynamic",
-                        column_config={
-                            "Lieu": st.column_config.SelectboxColumn(options=l_list, required=False),
-                            "Horaire": st.column_config.SelectboxColumn(options=h_list, required=False),
-                            "Actif": st.column_config.CheckboxColumn(default=False),  # ← MODIFICATION : décoché par défaut
-                            "Verrouillé": st.column_config.CheckboxColumn(default=False, help="Si coché, seul l'admin peut gérer les inscriptions")
-                        },
-                        use_container_width=True,
-                        key="editor_ateliers"
-                    )
-                    if st.button("💾 Enregistrer"):
-                        to_db = []
-                        for _, r in df_ed.iterrows():
-                            lieu_nom = r['Lieu']
-                            horaire_lib = r['Horaire']
-                            if not lieu_nom or not horaire_lib:
-                                st.warning(f"Ligne ignorée : lieu ou horaire manquant pour la date {r['Date']}")
-                                continue
-                            if lieu_nom not in map_l_id:
-                                st.error(f"Lieu '{lieu_nom}' introuvable. Annulation.")
-                                st.stop()
-                            if horaire_lib not in map_h_id:
-                                st.error(f"Horaire '{horaire_lib}' introuvable. Annulation.")
-                                st.stop()
-                            date_iso = parse_date_fr_to_iso(r['Date'])
-                            if not date_iso:
-                                st.error(f"Format de date invalide : {r['Date']}")
-                                st.stop()
-                            to_db.append({
-                                "date_atelier": date_iso,
-                                "titre": r['Titre'],
-                                "lieu_id": map_l_id[lieu_nom],
-                                "horaire_id": map_h_id[horaire_lib],
-                                "capacite_max": int(r['Capacité']),
-                                "est_actif": bool(r['Actif']),
-                                "Verrouille": bool(r.get("Verrouillé", False))
-                            })
-                        if to_db:
-                            try:
-                                supabase.table("ateliers").insert(to_db).execute()
-                                st.session_state['at_list_gen'] = []
-                                st.success(f"{len(to_db)} ateliers enregistrés avec succès !")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erreur lors de l'enregistrement : {str(e)}")
-                        else:
-                            st.warning("Aucune ligne valide à enregistrer (lieu ou horaire manquant).")
+            if st.session_state['at_list_gen']:
+                df_ed = st.data_editor(
+                    pd.DataFrame(st.session_state['at_list_gen']),
+                    num_rows="dynamic",
+                    column_config={
+                        "Lieu": st.column_config.SelectboxColumn(options=l_list, required=False),
+                        "Horaire": st.column_config.SelectboxColumn(options=h_list, required=False),
+                        "Actif": st.column_config.CheckboxColumn(default=False),
+                        "Verrouillé": st.column_config.CheckboxColumn(default=False, help="Si coché, seul l'admin peut gérer les inscriptions")
+                    },
+                    use_container_width=True,
+                    key="editor_ateliers"
+                )
+                if st.button("💾 Enregistrer"):
+                    to_db = []
+                    for _, r in df_ed.iterrows():
+                        lieu_nom = r['Lieu']
+                        horaire_lib = r['Horaire']
+                        if not lieu_nom or not horaire_lib:
+                            st.warning(f"Ligne ignorée : lieu ou horaire manquant pour la date {r['Date']}")
+                            continue
+                        if lieu_nom not in map_l_id:
+                            st.error(f"Lieu '{lieu_nom}' introuvable. Annulation.")
+                            st.stop()
+                        if horaire_lib not in map_h_id:
+                            st.error(f"Horaire '{horaire_lib}' introuvable. Annulation.")
+                            st.stop()
+                        date_iso = parse_date_fr_to_iso(r['Date'])
+                        if not date_iso:
+                            st.error(f"Format de date invalide : {r['Date']}")
+                            st.stop()
+                        to_db.append({
+                            "date_atelier": date_iso,
+                            "titre": r['Titre'],
+                            "lieu_id": map_l_id[lieu_nom],
+                            "horaire_id": map_h_id[horaire_lib],
+                            "capacite_max": int(r['Capacité']),
+                            "est_actif": bool(r['Actif']),
+                            "Verrouille": bool(r.get("Verrouillé", False)),
+                            "categorie_color": "#3498db"   # bleu par défaut
+                        })
+                    if to_db:
+                        try:
+                            supabase.table("ateliers").insert(to_db).execute()
+                            st.session_state['at_list_gen'] = []
+                            st.success(f"{len(to_db)} ateliers enregistrés avec succès !")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erreur lors de l'enregistrement : {str(e)}")
+                    else:
+                        st.warning("Aucune ligne valide à enregistrer (lieu ou horaire manquant).")
 
             elif sub == "Répertoire":
                 cf1, cf2, cf3 = st.columns(3)
