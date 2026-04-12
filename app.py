@@ -906,14 +906,12 @@ elif menu == "🔐 Administration":
     with t3: # PLANNING ATELIERS (Admin)
         st.subheader("📅 Planning des Ateliers")
         
-        # Filtre statut
         filtre_statut = st.radio("Filtrer par statut :", ["Tous", "Actifs", "Inactifs"], horizontal=True, key="admin_plan_filtre")
         
         c1_adm, c2_adm = st.columns(2)
         d_s_a = c1_adm.date_input("Du", date.today(), key="adm_plan_d1", format="DD/MM/YYYY")
         d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=30), key="adm_plan_d2", format="DD/MM/YYYY")
         
-        # Construction de la requête en fonction du filtre
         query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a))
         if filtre_statut == "Actifs":
             query = query.eq("est_actif", True)
@@ -921,7 +919,6 @@ elif menu == "🔐 Administration":
             query = query.eq("est_actif", False)
         ats_adm = query.order("date_atelier").execute()
     
-        # Optimisation : chargement groupé des inscriptions
         cache_ins_adm = {}
         adm_ins_list = []
         if ats_adm.data:
@@ -939,7 +936,6 @@ elif menu == "🔐 Administration":
                         "Enfants": p['nb_enfants']
                     })
     
-        # Exports
         df_adm_at = pd.DataFrame(adm_ins_list) if adm_ins_list else pd.DataFrame(columns=["Date", "Atelier", "Lieu", "AM", "Enfants"])
         cea1, cea2 = st.columns(2)
         cea1.download_button("📥 Excel Planning (Admin)", data=export_to_excel(df_adm_at), file_name="admin_planning_ateliers.xlsx", key="adm_exp_xl")
@@ -947,19 +943,19 @@ elif menu == "🔐 Administration":
             "Planning des Ateliers (Administration)", ats_adm.data if ats_adm.data else [], lambda aid: cache_ins_adm.get(aid, [])
         ), file_name="admin_planning_ateliers.pdf", key="adm_exp_pdf")
     
-        # Affichage des ateliers
         if ats_adm.data:
             for index, a in enumerate(ats_adm.data):
                 c_l = get_color(a['lieux']['nom'])
                 ins_at = cache_ins_adm.get(a['id'], [])
-                t_ad, t_en = len(ins_at), sum(p['nb_enfants'] for p in ins_at)
+                t_ad = len(ins_at)
+                t_en = sum(p['nb_enfants'] for p in ins_at)
                 restantes = a['capacite_max'] - (t_ad + t_en)
                 cl_c = "alerte-complet" if restantes <= 0 else ""
                 verrou_icon = " 🔒" if is_verrouille(a) else ""
                 at_info_log = f"{a['date_atelier']} | {a['horaires']['libelle']} | {a['lieux']['nom']}"
                 badge_cat = badge_categorie(a)
     
-                # Ligne d'en-tête avec retour à la ligne automatique
+                # Ligne d'en-tête avec retour à la ligne
                 st.markdown(
                     f"""
                     <div style="white-space: normal; word-wrap: break-word; margin-bottom: 5px;">
@@ -974,7 +970,6 @@ elif menu == "🔐 Administration":
                     unsafe_allow_html=True
                 )
     
-                # Affichage des inscrits avec modification possible
                 if ins_at:
                     ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
                     for p in ins_s:
@@ -989,7 +984,6 @@ elif menu == "🔐 Administration":
                         if cp4.button("🗑️", key=f"adm_del_plan_{p['id']}"):
                             confirm_unsubscribe_dialog(p['id'], n_f, at_info_log, "Admin")
     
-                # Expander pour ajouter une inscription
                 with st.expander(f"➕ Inscrire une AM à cet atelier", expanded=False):
                     ca1, ca2, ca3 = st.columns([2, 1, 1])
                     qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
