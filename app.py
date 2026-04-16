@@ -586,7 +586,7 @@ elif menu == "📊 Suivi & Récap":
     with t2:
         c_d1, c_d2 = st.columns(2)
         d_s = c_d1.date_input("Du", date.today(), key="pub_d1", format="DD/MM/YYYY")
-        d_e = c_d2.date_input("Au", d_s + timedelta(days=30), key="pub_d2", format="DD/MM/YYYY")
+        d_e = c_d2.date_input("Au", d_s + timedelta(days=90), key="pub_d2", format="DD/MM/YYYY")
         
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)") \
               .eq("est_actif", True) \
@@ -776,7 +776,7 @@ elif menu == "🔐 Administration":
             elif sub == "Répertoire":
                 cf1, cf2, cf3 = st.columns(3)
                 fs = cf1.date_input("Du", date.today()-timedelta(days=30), format="DD/MM/YYYY", key="rep_d1")
-                fe = cf2.date_input("Au", fs+timedelta(days=60), format="DD/MM/YYYY", key="rep_d2")
+                fe = cf2.date_input("Au", fs+timedelta(days=90), format="DD/MM/YYYY", key="rep_d2")
                 ft = cf3.selectbox("Statut Filtre", ["Tous", "Actifs", "Inactifs"])
                 
                 rep = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)") \
@@ -917,7 +917,7 @@ elif menu == "🔐 Administration":
             
             c1_adm, c2_adm = st.columns(2)
             d_s_a = c1_adm.date_input("Du", date.today(), key="adm_plan_d1", format="DD/MM/YYYY")
-            d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=30), key="adm_plan_d2", format="DD/MM/YYYY")
+            d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=90), key="adm_plan_d2", format="DD/MM/YYYY")
             
             query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a))
             if filtre_statut == "Actifs":
