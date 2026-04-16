@@ -1159,16 +1159,18 @@ elif menu == "🔐 Administration":
             cj1, cj2 = st.columns(2)
             dj_s = cj1.date_input("Depuis le", date.today() - timedelta(days=7), format="DD/MM/YYYY", key="log_d1")
             dj_e = cj2.date_input("Jusqu'au", date.today(), format="DD/MM/YYYY", key="log_d2")
-
+        
             start_date = dj_s.strftime("%Y-%m-%d") + "T00:00:00"
             end_date = dj_e.strftime("%Y-%m-%d") + "T23:59:59"
-
+        
             try:
                 res_logs = supabase.table("logs").select("*").gte("created_at", start_date).lte("created_at", end_date).order("created_at", desc=True).execute()
                 if res_logs.data:
                     logs_df = pd.DataFrame(res_logs.data)
-                    # Correction fuseau horaire : UTC → Europe/Paris (+1h hiver / +2h été)
+                    # Conversion du fuseau horaire pour l'affichage
                     logs_df['created_at'] = pd.to_datetime(logs_df['created_at'], utc=True).dt.tz_convert("Europe/Paris").dt.strftime('%d/%m/%Y %H:%M')
+                    # Nettoyage de la colonne 'details' : suppression du suffixe [date/heure]
+                    logs_df['details'] = logs_df['details'].str.replace(r'\s*\[.*?\]$', '', regex=True)
                     st.dataframe(
                         logs_df[['created_at', 'utilisateur', 'action', 'details']],
                         column_config={
