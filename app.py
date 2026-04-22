@@ -24,20 +24,20 @@ def check_access():
                 <div style="background-color: #fdf2e9; padding: 2rem; border-radius: 20px; text-align: center; border: 2px solid #ff9800;">
                     <h2 style="color: #e65100;">🔐 Accès sécurisé</h2>
                     <p>Veuillez saisir le code d'accès pour continuer.</p>
+                    <p>à accéder à Résa RPE</p>
                 </div>
             </div>
         """, unsafe_allow_html=True)
         code = st.text_input("Code d'accès", type="password", key="gate_code")
         if st.button("Valider", type="primary"):
-            if code == "78955":
+            if code == "RPECSP":
                 st.session_state["authenticated"] = True
                 st.rerun()
             else:
                 st.error("Code incorrect. Accès refusé.")
         st.stop()  # Empêche l'exécution du reste de l'application
-
-# check_access()   # désactivé pour les tests
-st.session_state["authenticated"] = True
+       
+check_access()
 
 # --- TITRE DE L'APPLICATION ---
 st.markdown("""
