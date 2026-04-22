@@ -24,7 +24,7 @@ def check_access():
                 <div style="background-color: #fdf2e9; padding: 2rem; border-radius: 20px; text-align: center; border: 2px solid #ff9800;">
                     <h2 style="color: #e65100;">🔐 Accès sécurisé</h2>
                     <p>Veuillez saisir le code d'accès pour continuer.</p>
-                    <p><span style="font-size: 1.8rem; font-weight: bold; color: #e65100;">Résa RPE</span></p>
+                    <p><span style="font-size: 2.8rem; font-weight: bold; color: #e65100;">Résa RPE</span></p>
                 </div>
             </div>
         """, unsafe_allow_html=True)
