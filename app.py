@@ -24,7 +24,7 @@ def check_access():
                 <div style="background-color: #fdf2e9; padding: 2rem; border-radius: 20px; text-align: center; border: 2px solid #ff9800;">
                     <h2 style="color: #e65100;">🔐 Accès sécurisé</h2>
                     <p>Veuillez saisir le code d'accès pour continuer.</p>
-                    <p>à accéder à Résa RPE</p>
+                    <p>à accéder à <span style="font-size: 1.8rem; font-weight: bold; color: #ff9800;">Résa RPE</span></p>
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -35,7 +35,7 @@ def check_access():
                 st.rerun()
             else:
                 st.error("Code incorrect. Accès refusé.")
-        st.stop()  # Empêche l'exécution du reste de l'application
+        st.stop()
        
 check_access()
 
