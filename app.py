@@ -473,6 +473,9 @@ if menu == "📝 Inscriptions":
             # Ajout d'un cadenas si l'atelier est verrouillé
             if is_verrouille(at):
                 statut_p += " 🔒 (verrouillé)"
+
+            # --- DÉFINITION DE at_info_log (AJOUTER CETTE LIGNE) ---
+            at_info_log = f"{at['date_atelier']} | {at['horaires']['libelle']} | {at['lieux']['nom']}"            
             
             # --- Vérifier si l'utilisateur courant est déjà inscrit ---
             user_id = dict_adh.get(user_principal)  # user_principal est le nom complet sélectionné
