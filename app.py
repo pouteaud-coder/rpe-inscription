@@ -663,11 +663,32 @@ elif menu == "📊 Suivi & Récap":
 # ==========================================
 
 elif menu == "🔐 Administration":
-    c_login1, c_login2 = st.columns([0.7, 0.3])
-    pw = c_login1.text_input("Code secret admin", type="password")
-    if c_login2.button("🔑 Code Super Admin"): super_admin_dialog()
-
-    if pw == current_code or st.session_state['super_access']:
+    # Gestion de l'authentification admin
+    if "admin_authenticated" not in st.session_state:
+        st.session_state.admin_authenticated = False
+    
+    # Formulaire pour la saisie du code admin (permet la validation par Entrée)
+    with st.form(key="admin_login_form"):
+        col1, col2 = st.columns([0.7, 0.3])
+        with col1:
+            admin_code_input = st.text_input("Code secret admin", type="password", key="admin_code_input")
+        with col2:
+            submitted = st.form_submit_button("Valider")
+        if submitted:
+            if admin_code_input == current_code:
+                st.session_state.admin_authenticated = True
+                st.success("Accès admin validé")
+                st.rerun()
+            else:
+                st.error("Code incorrect")
+                st.session_state.admin_authenticated = False
+    
+    # Bouton Super Admin en dehors du formulaire
+    if st.button("🔑 Code Super Admin"):
+        super_admin_dialog()
+    
+    # Affichage des onglets si authentifié (admin classique ou super admin)
+    if st.session_state.admin_authenticated or st.session_state.get('super_access', False):
         t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
             "🏗️ Ateliers", "📊 Suivi AM", "📅 Planning Ateliers",
             "📈 Statistiques de participation", "👥 Liste AM",
