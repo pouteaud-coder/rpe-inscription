@@ -5,6 +5,9 @@ from zoneinfo import ZoneInfo
 from supabase import create_client, Client
 import hashlib
 import io
+import re
+import urllib.parse
+import html as html_lib
 from fpdf import FPDF
 
 # ==========================================
@@ -73,6 +76,11 @@ st.markdown("""
     .nb-enfants-focus { color: #2e7d32; font-weight: 600; }
     .stButton button { border-radius: 8px !important; }
     .badge-verrouille { background-color: #e65100; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; margin-left: 6px; }
+    .btn-agenda { display:inline-flex; align-items:center; gap:4px; padding:0.25rem 0.7rem; margin-left:8px;
+        border-radius:8px; border:1px solid rgba(49,51,63,0.2); background-color:#ffffff; color:#31333F;
+        font-size:0.82rem; font-weight:400; text-decoration:none; vertical-align:middle;
+        transition:border-color .15s, color .15s, background-color .15s; }
+    .btn-agenda:hover { border-color:#ff9800; color:#e65100; background-color:#fff8f0; }
     /* Centrage de la colonne "Nombre d'ateliers" */
     .stDataFrame table thead tr th:nth-child(2),
     .stDataFrame table tbody tr td:nth-child(2) {
@@ -200,7 +208,86 @@ def badge_categorie(at):
     if color and isinstance(color, str) and color.strip():
         return f'<span style="background-color:{color}; width:14px; height:14px; display:inline-block; border-radius:50%; margin-right:6px;"></span>'
     return ""   # ← pas de badge gris
-    
+
+
+# --- BOUTON "AJOUTER À MON AGENDA" (lien Google Agenda pré-rempli, sans API) ---
+PREFIXE_AGENDA = "RPE"
+
+_HORAIRE_RE = re.compile(
+    r'^\s*(\d{1,2})\s*[hH:]\s*(\d{1,2})?\s*-\s*(\d{1,2})\s*[hH:]\s*(\d{1,2})?\s*$'
+)
+
+def _parse_horaire(horaire_str):
+    """Parse un horaire tolérant : '9h-11h', '9h30-11h45', '9:30 - 11:00', '9H30 - 11H'...
+    Retourne (h_debut, min_debut, h_fin, min_fin) ou None si non reconnu."""
+    if not horaire_str:
+        return None
+    m = _HORAIRE_RE.match(str(horaire_str).strip())
+    if not m:
+        return None
+    try:
+        h1 = int(m.group(1)); mi1 = int(m.group(2)) if m.group(2) else 0
+        h2 = int(m.group(3)); mi2 = int(m.group(4)) if m.group(4) else 0
+        if not (0 <= h1 <= 23 and 0 <= mi1 <= 59 and 0 <= h2 <= 23 and 0 <= mi2 <= 59):
+            return None
+        return h1, mi1, h2, mi2
+    except (ValueError, TypeError):
+        return None
+
+def lien_google_agenda(date_atelier, horaire, titre=None, lieu=None, prefixe=PREFIXE_AGENDA):
+    """Construit une URL Google Agenda pré-remplie (action=TEMPLATE), sans passer par l'API Google.
+    Réutilisable sur n'importe quel écran affichant un atelier (date, horaire, titre, lieu)."""
+    titre_clean = str(titre).strip() if titre else ""
+    text = f"{prefixe} - {titre_clean}" if titre_clean else prefixe
+
+    lieu_clean = str(lieu).strip() if lieu else ""
+    details_parts = []
+    if titre_clean:
+        details_parts.append(f"Atelier : {titre_clean}")
+    if lieu_clean:
+        details_parts.append(f"Lieu : {lieu_clean}")
+    details = "\n".join(details_parts)
+
+    try:
+        if isinstance(date_atelier, str):
+            d = datetime.strptime(date_atelier, "%Y-%m-%d").date()
+        elif isinstance(date_atelier, datetime):
+            d = date_atelier.date()
+        elif isinstance(date_atelier, date):
+            d = date_atelier
+        else:
+            d = None
+    except (ValueError, TypeError):
+        d = None
+    if d is None:
+        d = date.today()
+
+    parsed = _parse_horaire(horaire)
+    if parsed:
+        h1, mi1, h2, mi2 = parsed
+        debut = datetime(d.year, d.month, d.day, h1, mi1)
+        fin = datetime(d.year, d.month, d.day, h2, mi2)
+        if fin <= debut:
+            fin = debut + timedelta(hours=1)
+        dates_value = f"{debut.strftime('%Y%m%dT%H%M%S')}/{fin.strftime('%Y%m%dT%H%M%S')}"
+    else:
+        # Horaire non reconnu -> événement journée entière plutôt que planter
+        lendemain = d + timedelta(days=1)
+        dates_value = f"{d.strftime('%Y%m%d')}/{lendemain.strftime('%Y%m%d')}"
+
+    params = {
+        "action": "TEMPLATE", "text": text, "dates": dates_value,
+        "details": details, "location": lieu_clean, "ctz": "Europe/Paris",
+    }
+    return f"https://calendar.google.com/calendar/render?{urllib.parse.urlencode(params)}"
+
+def bouton_agenda_html(date_atelier, horaire, titre=None, lieu=None):
+    """Génère le HTML du bouton "Ajouter à mon agenda", prêt à insérer dans un
+    st.markdown(..., unsafe_allow_html=True)."""
+    url_safe = html_lib.escape(lien_google_agenda(date_atelier, horaire, titre, lieu), quote=True)
+    return f'<a href="{url_safe}" target="_blank" rel="noopener noreferrer" class="btn-agenda">📅 Ajouter à mon agenda</a>'
+
+
 
 # --- FONCTIONS D'EXPORT (inchangées) ---
 def export_to_excel(df):
@@ -585,7 +672,8 @@ elif menu == "📊 Suivi & Récap":
                 at = i['ateliers']
                 c_l = get_color(at['lieux']['nom'])
                 badge_cat = badge_categorie(at)
-                st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+                bouton_agenda = bouton_agenda_html(at['date_atelier'], at['horaires']['libelle'], at['titre'], at['lieux']['nom'])
+                st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)** {bouton_agenda}", unsafe_allow_html=True)
         else:
             st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
