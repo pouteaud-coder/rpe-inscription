@@ -77,11 +77,14 @@ st.markdown("""
     .nb-enfants-focus { color: #2e7d32; font-weight: 600; }
     .stButton button { border-radius: 8px !important; }
     .badge-verrouille { background-color: #e65100; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; margin-left: 6px; }
-    .btn-agenda { display:inline-flex; align-items:center; gap:4px; padding:0.25rem 0.7rem; margin-left:8px;
-        border-radius:8px; border:1px solid rgba(49,51,63,0.2); background-color:#ffffff; color:#31333F;
-        font-size:0.82rem; font-weight:400; text-decoration:none; vertical-align:middle;
-        transition:border-color .15s, color .15s, background-color .15s; }
-    .btn-agenda:hover { border-color:#ff9800; color:#e65100; background-color:#fff8f0; }
+    .btn-agenda { display:inline-flex; align-items:center; gap:0.55rem; padding:0.4rem 1.1rem 0.4rem 0.4rem; margin-left:8px;
+        border-radius:999px; border:none; background-color:#fbe3d3; color:#b15a24;
+        font-size:0.85rem; font-weight:700; text-decoration:none; vertical-align:middle;
+        transition:filter .15s, transform .15s; }
+    .btn-agenda:hover { filter:brightness(0.97); transform:translateY(-1px); color:#b15a24; }
+    .btn-agenda-icon { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px;
+        border-radius:8px; background-color:#ffffff; box-shadow:0 1px 3px rgba(43,38,33,0.14);
+        font-size:0.9rem; line-height:1; }
     /* Centrage de la colonne "Nombre d'ateliers" */
     .stDataFrame table thead tr th:nth-child(2),
     .stDataFrame table tbody tr td:nth-child(2) {
@@ -283,10 +286,10 @@ def lien_google_agenda(date_atelier, horaire, titre=None, lieu=None, prefixe=PRE
     return f"https://calendar.google.com/calendar/render?{urllib.parse.urlencode(params)}"
 
 def bouton_agenda_html(date_atelier, horaire, titre=None, lieu=None):
-    """Génère le HTML du bouton "Ajouter à mon agenda", prêt à insérer dans un
-    st.markdown(..., unsafe_allow_html=True)."""
+    """Génère le HTML du bouton "Google Agenda" (pilule pastel pêche), prêt à insérer
+    dans un st.markdown(..., unsafe_allow_html=True)."""
     url_safe = html_lib.escape(lien_google_agenda(date_atelier, horaire, titre, lieu), quote=True)
-    return f'<a href="{url_safe}" target="_blank" rel="noopener noreferrer" class="btn-agenda">📅 Ajouter à mon agenda</a>'
+    return f'<a href="{url_safe}" target="_blank" rel="noopener noreferrer" class="btn-agenda"><span class="btn-agenda-icon">📅</span>Google Agenda</a>'
 
 
 # --- BOUTON "AJOUTER À L'AGENDA IPHONE" (fichier .ics, sans API) ---
@@ -374,14 +377,14 @@ def evenement_ics(date_atelier, horaire, titre=None, lieu=None, prefixe=PREFIXE_
     return "\r\n".join(lignes)
 
 def bouton_agenda_iphone_html(date_atelier, horaire, titre=None, lieu=None):
-    """Génère le HTML du bouton "Ajouter à l'agenda iPhone" (fichier .ics encodé en
+    """Génère le HTML du bouton "iPhone / Autre agenda" (fichier .ics encodé en
     data URI), prêt à insérer dans un st.markdown(..., unsafe_allow_html=True).
-    Même classe CSS .btn-agenda que le bouton Google Agenda -> format identique.
+    Même classe CSS .btn-agenda que le bouton Google Agenda -> forme pilule identique.
     Compatible iPhone/iOS (appli Agenda), Apple Calendar (Mac) et Outlook."""
     ics_content = evenement_ics(date_atelier, horaire, titre, lieu)
     b64 = base64.b64encode(ics_content.encode("utf-8")).decode("ascii")
     href = f"data:text/calendar;charset=utf-8;base64,{b64}"
-    return f'<a href="{href}" download="atelier_rpe.ics" class="btn-agenda">📱 Ajouter à mon agenda (iPhone)</a>'
+    return f'<a href="{href}" download="atelier_rpe.ics" class="btn-agenda"><span class="btn-agenda-icon">📱</span>iPhone / Autre agenda</a>'
 
 
 
