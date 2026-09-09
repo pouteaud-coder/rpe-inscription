@@ -8,6 +8,7 @@ import io
 import re
 import urllib.parse
 import html as html_lib
+import base64
 from fpdf import FPDF
 
 # ==========================================
@@ -286,6 +287,101 @@ def bouton_agenda_html(date_atelier, horaire, titre=None, lieu=None):
     st.markdown(..., unsafe_allow_html=True)."""
     url_safe = html_lib.escape(lien_google_agenda(date_atelier, horaire, titre, lieu), quote=True)
     return f'<a href="{url_safe}" target="_blank" rel="noopener noreferrer" class="btn-agenda">📅 Ajouter à mon agenda</a>'
+
+
+# --- BOUTON "AJOUTER À L'AGENDA IPHONE" (fichier .ics, sans API) ---
+def _ics_escape(text):
+    """Échappe une chaîne pour l'insertion dans un champ .ics (RFC 5545) :
+    antislash, virgule, point-virgule et retours à la ligne."""
+    if text is None:
+        return ""
+    text = str(text)
+    text = text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    text = text.replace("\r\n", "\\n").replace("\n", "\\n")
+    return text
+
+def evenement_ics(date_atelier, horaire, titre=None, lieu=None, prefixe=PREFIXE_AGENDA):
+    """Construit le contenu d'un fichier .ics (iCalendar) pour l'atelier, compatible
+    Agenda iPhone/iOS (et Apple Calendar, Outlook). Réutilise le même parsing
+    d'horaire tolérant que lien_google_agenda() : mêmes règles (fin <= début -> +1h,
+    horaire non reconnu -> événement journée entière)."""
+    titre_clean = str(titre).strip() if titre else ""
+    text = f"{prefixe} - {titre_clean}" if titre_clean else prefixe
+
+    lieu_clean = str(lieu).strip() if lieu else ""
+    details_parts = []
+    if titre_clean:
+        details_parts.append(f"Atelier : {titre_clean}")
+    if lieu_clean:
+        details_parts.append(f"Lieu : {lieu_clean}")
+    details = "\n".join(details_parts)
+
+    try:
+        if isinstance(date_atelier, str):
+            d = datetime.strptime(date_atelier, "%Y-%m-%d").date()
+        elif isinstance(date_atelier, datetime):
+            d = date_atelier.date()
+        elif isinstance(date_atelier, date):
+            d = date_atelier
+        else:
+            d = None
+    except (ValueError, TypeError):
+        d = None
+    if d is None:
+        d = date.today()
+
+    tz_paris = ZoneInfo("Europe/Paris")
+    parsed = _parse_horaire(horaire)
+    if parsed:
+        h1, mi1, h2, mi2 = parsed
+        debut_local = datetime(d.year, d.month, d.day, h1, mi1, tzinfo=tz_paris)
+        fin_local = datetime(d.year, d.month, d.day, h2, mi2, tzinfo=tz_paris)
+        if fin_local <= debut_local:
+            fin_local = debut_local + timedelta(hours=1)
+        debut_utc = debut_local.astimezone(ZoneInfo("UTC"))
+        fin_utc = fin_local.astimezone(ZoneInfo("UTC"))
+        dtstart_line = f"DTSTART:{debut_utc.strftime('%Y%m%dT%H%M%SZ')}"
+        dtend_line = f"DTEND:{fin_utc.strftime('%Y%m%dT%H%M%SZ')}"
+    else:
+        # Horaire non reconnu -> événement journée entière plutôt que planter
+        lendemain = d + timedelta(days=1)
+        dtstart_line = f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}"
+        dtend_line = f"DTEND;VALUE=DATE:{lendemain.strftime('%Y%m%d')}"
+
+    dtstamp = datetime.now(ZoneInfo("UTC")).strftime('%Y%m%dT%H%M%SZ')
+    uid_source = f"{d.isoformat()}-{horaire}-{titre_clean}-{lieu_clean}"
+    uid = f"{hashlib.md5(uid_source.encode()).hexdigest()}@resa-rpe"
+
+    lignes = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Resa RPE//Ajout Agenda//FR",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{dtstamp}",
+        dtstart_line,
+        dtend_line,
+        f"SUMMARY:{_ics_escape(text)}",
+    ]
+    if details:
+        lignes.append(f"DESCRIPTION:{_ics_escape(details)}")
+    if lieu_clean:
+        lignes.append(f"LOCATION:{_ics_escape(lieu_clean)}")
+    lignes += ["END:VEVENT", "END:VCALENDAR"]
+
+    return "\r\n".join(lignes)
+
+def bouton_agenda_iphone_html(date_atelier, horaire, titre=None, lieu=None):
+    """Génère le HTML du bouton "Ajouter à l'agenda iPhone" (fichier .ics encodé en
+    data URI), prêt à insérer dans un st.markdown(..., unsafe_allow_html=True).
+    Même classe CSS .btn-agenda que le bouton Google Agenda -> format identique.
+    Compatible iPhone/iOS (appli Agenda), Apple Calendar (Mac) et Outlook."""
+    ics_content = evenement_ics(date_atelier, horaire, titre, lieu)
+    b64 = base64.b64encode(ics_content.encode("utf-8")).decode("ascii")
+    href = f"data:text/calendar;charset=utf-8;base64,{b64}"
+    return f'<a href="{href}" download="atelier_rpe.ics" class="btn-agenda">📱 Ajouter à mon agenda (iPhone)</a>'
 
 
 
@@ -673,7 +769,8 @@ elif menu == "📊 Suivi & Récap":
                 c_l = get_color(at['lieux']['nom'])
                 badge_cat = badge_categorie(at)
                 bouton_agenda = bouton_agenda_html(at['date_atelier'], at['horaires']['libelle'], at['titre'], at['lieux']['nom'])
-                st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)** {bouton_agenda}", unsafe_allow_html=True)
+                bouton_agenda_iphone = bouton_agenda_iphone_html(at['date_atelier'], at['horaires']['libelle'], at['titre'], at['lieux']['nom'])
+                st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)** {bouton_agenda} {bouton_agenda_iphone}", unsafe_allow_html=True)
         else:
             st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
@@ -1198,7 +1295,8 @@ elif menu == "🔐 Administration":
                 pdf_stat_lines.append(f"Période : du {ds_stat.strftime('%d/%m/%Y')} au {de_stat.strftime('%d/%m/%Y')}")
                 pdf_stat_lines.append("")
                 for _, r in df_stats.iterrows():
-                    pdf_stat_lines.append(f"{r['Assistante Maternelle']} : {r['Nombre d\'ateliers']} atelier(s)")
+                    nb_ateliers_r = r['Nombre d\'ateliers']
+                    pdf_stat_lines.append(f"{r['Assistante Maternelle']} : {nb_ateliers_r} atelier(s)")
                 pdf_stat_lines.append("")
                 pdf_stat_lines.append(f"Total inscriptions sur la période : {total_inscr}")
                 pdf_stat_lines.append(f"Ateliers proposés sur la période : {nb_at_proposes}")
