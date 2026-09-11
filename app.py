@@ -855,7 +855,8 @@ elif menu == "📊 Suivi & Récap":
                 restantes = a['capacite_max'] - (t_ad + t_en)
                 cl_c = "alerte-complet" if restantes <= 0 else ""
                 badge_cat = badge_categorie(a)
-                badge_enf = f"<span class='compteur-badge'>👶 {t_en} enf.</span>" if requiert_enfants_a else ""
+                badge_enf = f" <span class='compteur-badge'>👶 {t_en} enf.</span>" if requiert_enfants_a else ""
+                badges_compteurs = f"<span class='compteur-badge'>👤 {t_ad} AM</span>{badge_enf} <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>"
 
                 # Ligne unique avec retour à la ligne automatique
                 st.markdown(
@@ -864,9 +865,7 @@ elif menu == "📊 Suivi & Récap":
                         {badge_cat}<strong>{format_date_fr_complete(a['date_atelier'])}</strong> | {a['titre']} |
                         <span class='lieu-badge' style='background-color:{c_l};'>{a['lieux']['nom']}</span> |
                         <span class='horaire-text'>{a['horaires']['libelle']}</span>
-                        <span class='compteur-badge'>👤 {t_ad} AM</span>
-                        {badge_enf}
-                        <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>
+                        {badges_compteurs}
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -1224,7 +1223,8 @@ elif menu == "🔐 Administration":
                     at_info_log = f"{a['date_atelier']} | {a['horaires']['libelle']} | {a['lieux']['nom']}"
                     badge_cat = badge_categorie(a)
                     requiert_enfants_adm = enfants_requis(a)
-                    badge_enf_adm = f"<span class='compteur-badge'>👶 {t_en} enf.</span>" if requiert_enfants_adm else ""
+                    badge_enf_adm = f" <span class='compteur-badge'>👶 {t_en} enf.</span>" if requiert_enfants_adm else ""
+                    badges_compteurs_adm = f"<span class='compteur-badge'>👤 {t_ad} AM</span>{badge_enf_adm} <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>"
 
                     # Ligne d'en-tête avec retour à la ligne
                     st.markdown(
@@ -1233,9 +1233,7 @@ elif menu == "🔐 Administration":
                             {badge_cat}<strong>{format_date_fr_complete(a['date_atelier'])}</strong> | {a['titre']} |
                             <span class='lieu-badge' style='background-color:{c_l};'>{a['lieux']['nom']}</span> |
                             <span class='horaire-text'>{a['horaires']['libelle']}</span>{verrou_icon}
-                            <span class='compteur-badge'>👤 {t_ad} AM</span>
-                            {badge_enf_adm}
-                            <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>
+                            {badges_compteurs_adm}
                         </div>
                         """,
                         unsafe_allow_html=True
