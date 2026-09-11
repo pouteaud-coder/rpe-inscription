@@ -198,6 +198,12 @@ def is_verrouille(at):
     """Retourne True si l'atelier est verrouillé"""
     return bool(at.get("Verrouille", at.get("verrouille", False)))
 
+def enfants_requis(at):
+    """Retourne True si le nombre d'enfants doit être demandé pour cet atelier (comportement par défaut).
+    Si la colonne n'existe pas encore ou est vide, on considère que c'est requis (rétrocompatibilité)."""
+    val = at.get("nb_enfants_requis", True)
+    return True if val is None else bool(val)
+
 def trier_par_nom_puis_date(data):
     """Trie une liste d'inscriptions par nom alphabétique puis date croissante"""
     return sorted(data, key=lambda i: (
@@ -436,6 +442,7 @@ def export_suivi_am_pdf(title, data_triee):
         lieu = at['lieux']['nom']
         horaire = at['horaires']['libelle']
         nb_enf = i['nb_enfants']
+        suffixe_enf_pdf = f"  |  {nb_enf} enfant(s)" if enfants_requis(at) else ""
 
         # En-tête AM (fond vert, texte blanc)
         if nom_am != curr_am:
@@ -453,7 +460,7 @@ def export_suivi_am_pdf(title, data_triee):
         pdf.cell(0, 6, ligne_date, ln=True)
 
         pdf.set_font("Arial", size=10)
-        detail = f"     {titre_at}  |  {lieu}  |  {horaire}  |  {nb_enf} enfant(s)"
+        detail = f"     {titre_at}  |  {lieu}  |  {horaire}{suffixe_enf_pdf}"
         pdf.cell(0, 6, detail.encode('latin-1', 'replace').decode('latin-1'), ln=True)
 
     return pdf.output(dest='S').encode('latin-1')
@@ -485,6 +492,7 @@ def export_planning_ateliers_pdf(title, ateliers_data, get_inscrits_fn):
         lieu = a['lieux']['nom']
         horaire = a['horaires']['libelle']
         verrou = " [VERROUILLE]" if is_verrouille(a) else ""
+        requiert_enfants_pdf = enfants_requis(a)
 
         # En-tête atelier (fond bleu-gris)
         pdf.set_fill_color(224, 235, 245)
@@ -494,14 +502,16 @@ def export_planning_ateliers_pdf(title, ateliers_data, get_inscrits_fn):
         pdf.cell(0, 8, entete.encode('latin-1', 'replace').decode('latin-1'), ln=True, fill=True)
 
         pdf.set_font("Arial", size=10)
-        sous = f"     Horaire : {horaire}  |  AM : {t_ad}  |  Enfants : {t_en}  |  Places restantes : {restantes}"
+        segment_enf_pdf = f"  |  Enfants : {t_en}" if requiert_enfants_pdf else ""
+        sous = f"     Horaire : {horaire}  |  AM : {t_ad}{segment_enf_pdf}  |  Places restantes : {restantes}"
         pdf.cell(0, 6, sous.encode('latin-1', 'replace').decode('latin-1'), ln=True)
 
         # Inscrits triés alphabétiquement
         ins_tries = sorted(ins_at, key=lambda x: (x['adherents']['nom'].upper(), x['adherents']['prenom'].upper()))
         for p in ins_tries:
             nom_p = f"{p['adherents']['prenom']} {p['adherents']['nom']}"
-            ligne = f"       • {nom_p}  ({p['nb_enfants']} enfant(s))"
+            suffixe_p_pdf = f"  ({p['nb_enfants']} enfant(s))" if requiert_enfants_pdf else ""
+            ligne = f"       • {nom_p}{suffixe_p_pdf}"
             pdf.cell(0, 6, ligne.encode('latin-1', 'replace').decode('latin-1'), ln=True)
 
         pdf.ln(3)
@@ -557,8 +567,8 @@ def super_admin_dialog():
         else: st.error("Code incorrect")
 
 @st.dialog("✏️ Modifier l'atelier")
-def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, capacite_actuelle, lieux_list, horaires_list, map_lieu_id, map_horaire_id):
-    """Dialogue de modification d'un atelier (titre, lieu, horaire, capacité)"""
+def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, capacite_actuelle, lieux_list, horaires_list, map_lieu_id, map_horaire_id, enfants_requis_actuel=True):
+    """Dialogue de modification d'un atelier (titre, lieu, horaire, capacité, nombre d'enfants requis)"""
     # Chargement des inscriptions pour vérifier la capacité minimale
     inscriptions = supabase.table("inscriptions").select("nb_enfants").eq("atelier_id", at_id).execute()
     total_occupation = sum([1 + ins['nb_enfants'] for ins in inscriptions.data]) if inscriptions.data else 0
@@ -573,6 +583,7 @@ def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, 
     nouveau_lieu = st.selectbox("Lieu", options=lieux_options, index=lieux_options.index(lieu_actuel_nom) if lieu_actuel_nom in lieux_options else 0)
     nouvel_horaire = st.selectbox("Horaire", options=horaires_options, index=horaires_options.index(horaire_actuel_lib) if horaire_actuel_lib in horaires_options else 0)
     nouvelle_capacite = st.number_input("Capacité maximale (places totales)", min_value=1, value=int(capacite_actuelle))
+    nouveau_flag_enfants = st.checkbox("Demander le nombre d'enfants à l'inscription", value=bool(enfants_requis_actuel), help="Décocher pour ce type d'atelier si le nombre d'enfants n'est pas pertinent (l'inscription se fera alors sans ce champ).")
 
     # Vérification de cohérence
     if nouvelle_capacite < total_occupation:
@@ -592,7 +603,8 @@ def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, 
                 "titre": nouveau_titre,
                 "lieu_id": nouveau_lieu_id,
                 "horaire_id": nouvel_horaire_id,
-                "capacite_max": nouvelle_capacite
+                "capacite_max": nouvelle_capacite,
+                "nb_enfants_requis": bool(nouveau_flag_enfants)
             }).eq("id", at_id).execute()
             enregistrer_log("Admin", "Modification atelier", f"Atelier ID {at_id} modifié : titre={nouveau_titre}, lieu={nouveau_lieu}, horaire={nouvel_horaire}, capacité={nouvelle_capacite}")
             st.success("Atelier modifié avec succès !")
@@ -676,31 +688,41 @@ if menu == "📝 Inscriptions":
             st.markdown(ligne_entete, unsafe_allow_html=True)
 
             # Expander pour la gestion des inscriptions
+            requiert_enfants = enfants_requis(at)
             with st.expander("📋 Gérer les inscriptions"):
                 if is_verrouille(at):
                     st.warning("🔒 Cet atelier est verrouillé par l'administration. Seul l'admin peut modifier les inscriptions.")
                     # Affichage simple des inscrits
                     for i in res_ins_data:
                         n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
-                        st.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
+                        if requiert_enfants:
+                            st.write(f"• {n_f} **({i['nb_enfants']} enf.)**")
+                        else:
+                            st.write(f"• {n_f}")
                 else:
                     # Affichage des inscrits avec modification possible
                     if res_ins_data:
                         for i in res_ins_data:
                             n_f = f"{i['adherents']['prenom']} {i['adherents']['nom']}"
-                            col_nom, col_nb, col_mod, col_del = st.columns([0.5, 0.2, 0.15, 0.15])
-                            col_nom.write(f"• {n_f}")
-                            nouveau_nb = col_nb.number_input("Enf.", min_value=1, max_value=10, value=i['nb_enfants'], key=f"nb_{i['id']}", label_visibility="collapsed")
-                            if col_mod.button("✏️ Modifier", key=f"mod_{i['id']}"):
-                                delta = nouveau_nb - i['nb_enfants']
-                                if restantes - delta < 0:
-                                    st.error("Manque de places")
-                                else:
-                                    supabase.table("inscriptions").update({"nb_enfants": nouveau_nb}).eq("id", i['id']).execute()
-                                    enregistrer_log(user_principal, "Modification", f"{n_f} change à {nouveau_nb} enfants - {at_info_log}")
-                                    st.rerun()
-                            if col_del.button("🗑️", key=f"del_{i['id']}"):
-                                confirm_unsubscribe_dialog(i['id'], n_f, at_info_log, user_principal)
+                            if requiert_enfants:
+                                col_nom, col_nb, col_mod, col_del = st.columns([0.5, 0.2, 0.15, 0.15])
+                                col_nom.write(f"• {n_f}")
+                                nouveau_nb = col_nb.number_input("Enf.", min_value=1, max_value=10, value=i['nb_enfants'], key=f"nb_{i['id']}", label_visibility="collapsed")
+                                if col_mod.button("✏️ Modifier", key=f"mod_{i['id']}"):
+                                    delta = nouveau_nb - i['nb_enfants']
+                                    if restantes - delta < 0:
+                                        st.error("Manque de places")
+                                    else:
+                                        supabase.table("inscriptions").update({"nb_enfants": nouveau_nb}).eq("id", i['id']).execute()
+                                        enregistrer_log(user_principal, "Modification", f"{n_f} change à {nouveau_nb} enfants - {at_info_log}")
+                                        st.rerun()
+                                if col_del.button("🗑️", key=f"del_{i['id']}"):
+                                    confirm_unsubscribe_dialog(i['id'], n_f, at_info_log, user_principal)
+                            else:
+                                col_nom, col_del = st.columns([0.85, 0.15])
+                                col_nom.write(f"• {n_f}")
+                                if col_del.button("🗑️", key=f"del_{i['id']}"):
+                                    confirm_unsubscribe_dialog(i['id'], n_f, at_info_log, user_principal)
                     else:
                         st.info("Aucune inscription pour cet atelier.")
 
@@ -711,10 +733,17 @@ if menu == "📝 Inscriptions":
                         idx_def = (liste_adh.index(user_principal) + 1)
                     except:
                         idx_def = 0
-                    c1, c2, c3 = st.columns([2, 1, 1])
-                    qui = c1.selectbox("Assistante maternelle", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
-                    nb_e = c2.number_input("Nombre d'enfants", min_value=1, max_value=10, value=1, key=f"e_{at['id']}")
-                    if c3.button("Valider l'inscription", key=f"v_{at['id']}", type="primary"):
+                    if requiert_enfants:
+                        c1, c2, c3 = st.columns([2, 1, 1])
+                        qui = c1.selectbox("Assistante maternelle", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
+                        nb_e = c2.number_input("Nombre d'enfants", min_value=1, max_value=10, value=1, key=f"e_{at['id']}")
+                        bouton_valider = c3
+                    else:
+                        c1, c3 = st.columns([3, 1])
+                        qui = c1.selectbox("Assistante maternelle", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
+                        nb_e = 0
+                        bouton_valider = c3
+                    if bouton_valider.button("Valider l'inscription", key=f"v_{at['id']}", type="primary"):
                         if qui != "Choisir...":
                             id_adh = dict_adh[qui]
                             existing = next((ins for ins in res_ins_data if ins['adherent_id'] == id_adh), None)
@@ -725,7 +754,7 @@ if menu == "📝 Inscriptions":
                                     st.error("Manque de places")
                                 else:
                                     supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
-                                    enregistrer_log(user_principal, "Inscription", f"{qui} s'inscrit (+{nb_e} enf.) - {at_info_log}")
+                                    enregistrer_log(user_principal, "Inscription", f"{qui} s'inscrit" + (f" (+{nb_e} enf.)" if requiert_enfants else "") + f" - {at_info_log}")
                                     st.rerun()
 
 # ==========================================
@@ -773,7 +802,8 @@ elif menu == "📊 Suivi & Récap":
                 badge_cat = badge_categorie(at)
                 bouton_agenda = bouton_agenda_html(at['date_atelier'], at['horaires']['libelle'], at['titre'], at['lieux']['nom'])
                 bouton_agenda_iphone = bouton_agenda_iphone_html(at['date_atelier'], at['horaires']['libelle'], at['titre'], at['lieux']['nom'])
-                st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)** {bouton_agenda} {bouton_agenda_iphone}", unsafe_allow_html=True)
+                suffixe_enf = f" **({i['nb_enfants']} enf.)**" if enfants_requis(at) else ""
+                st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span>{suffixe_enf} {bouton_agenda} {bouton_agenda_iphone}", unsafe_allow_html=True)
         else:
             st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
@@ -820,31 +850,34 @@ elif menu == "📊 Suivi & Récap":
             for idx, a in enumerate(ats_raw.data):
                 c_l = get_color(a['lieux']['nom'])
                 ins_at = cache_ins.get(a['id'], [])
+                requiert_enfants_a = enfants_requis(a)
                 t_ad, t_en = len(ins_at), sum(p['nb_enfants'] for p in ins_at)
                 restantes = a['capacite_max'] - (t_ad + t_en)
                 cl_c = "alerte-complet" if restantes <= 0 else ""
                 badge_cat = badge_categorie(a)
-                
+                badge_enf = f"<span class='compteur-badge'>👶 {t_en} enf.</span>" if requiert_enfants_a else ""
+
                 # Ligne unique avec retour à la ligne automatique
                 st.markdown(
                     f"""
                     <div style="white-space: normal; word-wrap: break-word; margin-bottom: 5px;">
-                        {badge_cat}<strong>{format_date_fr_complete(a['date_atelier'])}</strong> | {a['titre']} | 
-                        <span class='lieu-badge' style='background-color:{c_l};'>{a['lieux']['nom']}</span> | 
+                        {badge_cat}<strong>{format_date_fr_complete(a['date_atelier'])}</strong> | {a['titre']} |
+                        <span class='lieu-badge' style='background-color:{c_l};'>{a['lieux']['nom']}</span> |
                         <span class='horaire-text'>{a['horaires']['libelle']}</span>
                         <span class='compteur-badge'>👤 {t_ad} AM</span>
-                        <span class='compteur-badge'>👶 {t_en} enf.</span>
+                        {badge_enf}
                         <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
-                
+
                 if ins_at:
                     ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
                     html = "<div class='container-inscrits'>"
                     for p in ins_s:
-                        html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]} <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span></span>'
+                        suffixe_p = f' <span class="nb-enfants-focus">({p["nb_enfants"]} enfants)</span>' if requiert_enfants_a else ""
+                        html += f'<span class="liste-inscrits">• {p["adherents"]["prenom"]} {p["adherents"]["nom"]}{suffixe_p}</span>'
                     st.markdown(html + "</div>", unsafe_allow_html=True)
                 
                 if idx < len(ats_raw.data) - 1:
@@ -924,13 +957,14 @@ elif menu == "🔐 Administration":
                             horaire_val = horaire_par_defaut if horaire_par_defaut else ""
                             capa = map_l_cap.get(lieu_val, 10) if lieu_val else 10
                             tmp.append({
-                                "Date": format_date_fr_complete(curr, False), 
-                                "Titre": "", 
-                                "Lieu": lieu_val, 
-                                "Horaire": horaire_val, 
-                                "Capacité": capa, 
+                                "Date": format_date_fr_complete(curr, False),
+                                "Titre": "",
+                                "Lieu": lieu_val,
+                                "Horaire": horaire_val,
+                                "Capacité": capa,
                                 "Actif": False,
-                                "Verrouillé": False
+                                "Verrouillé": False,
+                                "Nb enfants requis": True
                             })
                         curr += timedelta(days=1)
                     st.session_state['at_list_gen'] = tmp
@@ -944,7 +978,8 @@ elif menu == "🔐 Administration":
                             "Lieu": st.column_config.SelectboxColumn(options=l_list, required=False),
                             "Horaire": st.column_config.SelectboxColumn(options=h_list, required=False),
                             "Actif": st.column_config.CheckboxColumn(default=False),
-                            "Verrouillé": st.column_config.CheckboxColumn(default=False, help="Si coché, seul l'admin peut gérer les inscriptions")
+                            "Verrouillé": st.column_config.CheckboxColumn(default=False, help="Si coché, seul l'admin peut gérer les inscriptions"),
+                            "Nb enfants requis": st.column_config.CheckboxColumn(default=True, help="Si décoché, le nombre d'enfants ne sera pas demandé lors de l'inscription à cet atelier")
                         },
                         use_container_width=True,
                         key="editor_ateliers"
@@ -975,7 +1010,8 @@ elif menu == "🔐 Administration":
                                 "capacite_max": int(r['Capacité']),
                                 "est_actif": bool(r['Actif']),
                                 "Verrouille": bool(r.get("Verrouillé", False)),
-                                "categorie_color": "#3498db"   # bleu par défaut
+                                "categorie_color": "#3498db",   # bleu par défaut
+                                "nb_enfants_requis": bool(r.get("Nb enfants requis", True))
                             })
                         if to_db:
                             try:
@@ -1036,9 +1072,10 @@ elif menu == "🔐 Administration":
                     horaire_str = a['horaires']['libelle']
                     titre_str = a['titre']
                     verrou_icon = " 🔒" if is_verrouille(a) else ""
-                    
-                    ca, cb, cc, cd, ce_couleur, ce_btn, cf_col = st.columns([0.40, 0.08, 0.08, 0.08, 0.12, 0.08, 0.08])
-                    ca.markdown(f"{badge_cat}{badge_actif}**{date_str}** | {horaire_str} | {titre_str} | {lieu_badge}{verrou_icon}", unsafe_allow_html=True)
+                    enfants_icon = "" if enfants_requis(a) else " <span class='badge-verrouille' style='background-color:#95a5a6;'>👶 non requis</span>"
+
+                    ca, cb, cc, cg, cd, ce_couleur, ce_btn, cf_col = st.columns([0.32, 0.08, 0.08, 0.10, 0.08, 0.12, 0.08, 0.08])
+                    ca.markdown(f"{badge_cat}{badge_actif}**{date_str}** | {horaire_str} | {titre_str} | {lieu_badge}{verrou_icon}{enfants_icon}", unsafe_allow_html=True)
                     
                     # Activer/Désactiver
                     btn_l = "🔴 Désactiver" if a['est_actif'] else "🟢 Activer"
@@ -1054,9 +1091,18 @@ elif menu == "🔐 Administration":
                         enregistrer_log("Admin", "Verrouillage atelier", f"Atelier '{a['titre']}' du {a['date_atelier']} {'verrouillé' if nouvel_etat else 'déverrouillé'}")
                         st.rerun()
                     
+                    # Enfants requis / non requis
+                    btn_e = "👶✅" if enfants_requis(a) else "👶🚫"
+                    aide_e = "Nombre d'enfants actuellement requis à l'inscription. Cliquer pour le rendre optionnel." if enfants_requis(a) else "Nombre d'enfants actuellement non requis à l'inscription. Cliquer pour le rendre obligatoire."
+                    if cg.button(btn_e, key=f"at_enf_{a['id']}", help=aide_e):
+                        nouvel_etat_enf = not enfants_requis(a)
+                        supabase.table("ateliers").update({"nb_enfants_requis": bool(nouvel_etat_enf)}).eq("id", a['id']).execute()
+                        enregistrer_log("Admin", "Modification atelier", f"Atelier '{a['titre']}' du {a['date_atelier']} : nombre d'enfants {'requis' if nouvel_etat_enf else 'non requis'}")
+                        st.rerun()
+
                     # Modifier
                     if cd.button("✏️", key=f"at_edit_{a['id']}"):
-                        edit_atelier_dialog(a['id'], a['titre'], a['lieu_id'], a['horaire_id'], a['capacite_max'], l_raw, h_raw, map_l_id, map_h_id)
+                        edit_atelier_dialog(a['id'], a['titre'], a['lieu_id'], a['horaire_id'], a['capacite_max'], l_raw, h_raw, map_l_id, map_h_id, enfants_requis(a))
                     
                     # Sélecteur de couleur (palette)
                     couleur_actuelle = a.get('categorie_color', '#3498db')
@@ -1121,7 +1167,8 @@ elif menu == "🔐 Administration":
                     at = i['ateliers']
                     c_l = get_color(at['lieux']['nom'])
                     badge_cat = badge_categorie(at)
-                    st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span> **({i['nb_enfants']} enf.)**", unsafe_allow_html=True)
+                    suffixe_enf_adm = f" **({i['nb_enfants']} enf.)**" if enfants_requis(at) else ""
+                    st.markdown(f"{badge_cat}{format_date_fr_complete(at['date_atelier'], gras=True)} — {at['titre']} <span class='lieu-badge' style='background-color:{c_l}'>{at['lieux']['nom']}</span> <span class='horaire-text'>({at['horaires']['libelle']})</span>{suffixe_enf_adm}", unsafe_allow_html=True)
             else:
                 st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
@@ -1176,41 +1223,56 @@ elif menu == "🔐 Administration":
                     verrou_icon = " 🔒" if is_verrouille(a) else ""
                     at_info_log = f"{a['date_atelier']} | {a['horaires']['libelle']} | {a['lieux']['nom']}"
                     badge_cat = badge_categorie(a)
-        
+                    requiert_enfants_adm = enfants_requis(a)
+                    badge_enf_adm = f"<span class='compteur-badge'>👶 {t_en} enf.</span>" if requiert_enfants_adm else ""
+
                     # Ligne d'en-tête avec retour à la ligne
                     st.markdown(
                         f"""
                         <div style="white-space: normal; word-wrap: break-word; margin-bottom: 5px;">
-                            {badge_cat}<strong>{format_date_fr_complete(a['date_atelier'])}</strong> | {a['titre']} | 
-                            <span class='lieu-badge' style='background-color:{c_l};'>{a['lieux']['nom']}</span> | 
+                            {badge_cat}<strong>{format_date_fr_complete(a['date_atelier'])}</strong> | {a['titre']} |
+                            <span class='lieu-badge' style='background-color:{c_l};'>{a['lieux']['nom']}</span> |
                             <span class='horaire-text'>{a['horaires']['libelle']}</span>{verrou_icon}
                             <span class='compteur-badge'>👤 {t_ad} AM</span>
-                            <span class='compteur-badge'>👶 {t_en} enf.</span>
+                            {badge_enf_adm}
                             <span class='compteur-badge {cl_c}'>🏁 {restantes} pl.</span>
                         </div>
                         """,
                         unsafe_allow_html=True
                     )
-        
+
                     if ins_at:
                         ins_s = sorted(ins_at, key=lambda x: (x['adherents']['nom'], x['adherents']['prenom']))
                         for p in ins_s:
                             n_f = f"{p['adherents']['prenom']} {p['adherents']['nom']}"
-                            cp1, cp2, cp3, cp4 = st.columns([0.45, 0.2, 0.2, 0.15])
-                            cp1.write(f"• {n_f}")
-                            new_nb = cp2.number_input("Enf.", 1, 10, int(p['nb_enfants']), key=f"adm_nb_{p['id']}", label_visibility="collapsed")
-                            if cp3.button("✏️ Modifier", key=f"adm_mod_{p['id']}"):
-                                supabase.table("inscriptions").update({"nb_enfants": new_nb}).eq("id", p['id']).execute()
-                                enregistrer_log("Admin", "Modification (admin)", f"{n_f} → {new_nb} enfants - {at_info_log}")
-                                st.rerun()
-                            if cp4.button("🗑️", key=f"adm_del_plan_{p['id']}"):
-                                confirm_unsubscribe_dialog(p['id'], n_f, at_info_log, "Admin")
-        
+                            if requiert_enfants_adm:
+                                cp1, cp2, cp3, cp4 = st.columns([0.45, 0.2, 0.2, 0.15])
+                                cp1.write(f"• {n_f}")
+                                new_nb = cp2.number_input("Enf.", 1, 10, int(p['nb_enfants']), key=f"adm_nb_{p['id']}", label_visibility="collapsed")
+                                if cp3.button("✏️ Modifier", key=f"adm_mod_{p['id']}"):
+                                    supabase.table("inscriptions").update({"nb_enfants": new_nb}).eq("id", p['id']).execute()
+                                    enregistrer_log("Admin", "Modification (admin)", f"{n_f} → {new_nb} enfants - {at_info_log}")
+                                    st.rerun()
+                                if cp4.button("🗑️", key=f"adm_del_plan_{p['id']}"):
+                                    confirm_unsubscribe_dialog(p['id'], n_f, at_info_log, "Admin")
+                            else:
+                                cp1, cp4 = st.columns([0.85, 0.15])
+                                cp1.write(f"• {n_f}")
+                                if cp4.button("🗑️", key=f"adm_del_plan_{p['id']}"):
+                                    confirm_unsubscribe_dialog(p['id'], n_f, at_info_log, "Admin")
+
                     with st.expander(f"➕ Inscrire une AM à cet atelier", expanded=False):
-                        ca1, ca2, ca3 = st.columns([2, 1, 1])
-                        qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
-                        nb_adm = ca2.number_input("Enfants", 1, 10, 1, key=f"adm_enf_{a['id']}")
-                        if ca3.button("✅ Inscrire", key=f"adm_ins_{a['id']}", type="primary"):
+                        if requiert_enfants_adm:
+                            ca1, ca2, ca3 = st.columns([2, 1, 1])
+                            qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
+                            nb_adm = ca2.number_input("Enfants", 1, 10, 1, key=f"adm_enf_{a['id']}")
+                            bouton_inscr_adm = ca3
+                        else:
+                            ca1, ca3 = st.columns([3, 1])
+                            qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
+                            nb_adm = 0
+                            bouton_inscr_adm = ca3
+                        if bouton_inscr_adm.button("✅ Inscrire", key=f"adm_ins_{a['id']}", type="primary"):
                             if qui_adm != "Choisir...":
                                 id_adh = dict_adh[qui_adm]
                                 existing = next((ins for ins in ins_at if ins['adherent_id'] == id_adh), None)
@@ -1226,7 +1288,7 @@ elif menu == "🔐 Administration":
                                         st.error("Manque de places")
                                     else:
                                         supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": a['id'], "nb_enfants": nb_adm}).execute()
-                                        enregistrer_log("Admin", "Inscription (admin)", f"{qui_adm} inscrite (+{nb_adm} enf.) - {at_info_log}")
+                                        enregistrer_log("Admin", "Inscription (admin)", f"{qui_adm} inscrite" + (f" (+{nb_adm} enf.)" if requiert_enfants_adm else "") + f" - {at_info_log}")
                                         st.rerun()
         
                     if index < len(ats_adm.data) - 1:
