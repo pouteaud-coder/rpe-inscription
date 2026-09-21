@@ -526,6 +526,9 @@ def secure_delete_dialog(table, item_id, label, current_code):
     if st.button("Confirmer", type="primary"):
         if pw == current_code or pw == "0000":
             supabase.table(table).update({"est_actif": False}).eq("id", item_id).execute()
+            if table == "adherents":
+                load_adherents.clear()
+                load_adherents_tous.clear()
             st.success("Opération réussie"); st.rerun()
         else: st.error("Code incorrect")
 
@@ -542,6 +545,7 @@ def edit_am_dialog(am_id, nom_actuel, prenom_actuel, nb_enfants_defaut_actuel=1)
         if new_nom and new_pre:
             supabase.table("adherents").update({"nom": new_nom, "prenom": new_pre, "nb_enfants_defaut": int(new_nb_defaut)}).eq("id", am_id).execute()
             load_adherents.clear()
+            load_adherents_tous.clear()
             st.success("Modifié !"); st.rerun()
 
 @st.dialog("⚠️ Suppression Atelier")
@@ -631,6 +635,23 @@ def edit_atelier_dialog(at_id, titre_actuel, lieu_id_actuel, horaire_id_actuel, 
 def load_adherents():
     res = supabase.table("adherents").select("*").eq("est_actif", True).order("nom").order("prenom").execute()
     return res.data
+
+@st.cache_data(ttl=60)
+def load_adherents_tous():
+    """Charge TOUTES les AM (actives et inactives) — utilisé pour l'écran Liste AM (filtre de statut, doublons)."""
+    res = supabase.table("adherents").select("*").order("nom").order("prenom").execute()
+    return res.data
+
+@st.cache_data(ttl=60)
+def load_nb_inscriptions_par_adherent():
+    """Nombre d'inscriptions déjà enregistrées, par AM — sert à savoir si une AM peut être supprimée sans conséquence."""
+    res = supabase.table("inscriptions").select("adherent_id").execute()
+    compte = {}
+    for row in (res.data or []):
+        aid = row.get('adherent_id')
+        if aid is not None:
+            compte[aid] = compte.get(aid, 0) + 1
+    return compte
 
 @st.cache_data(ttl=60)
 def load_lieux():
@@ -1501,11 +1522,52 @@ elif menu == "🔐 Administration":
                     if nom and pre:
                         supabase.table("adherents").insert({"nom": nom, "prenom": pre, "est_actif": True, "nb_enfants_defaut": int(nb_defaut_nouveau)}).execute()
                         load_adherents.clear()
+                        load_adherents_tous.clear()
                         st.rerun()
-            for u in res_adh.data:
+
+            st.markdown("---")
+            filtre_am_statut = st.radio("Filtrer par statut :", ["Actifs", "Inactifs", "Tous"], index=0, horizontal=True, key="am_filtre_statut")
+
+            tous_adh_am = load_adherents_tous()
+            nb_ins_par_adh = load_nb_inscriptions_par_adherent()
+
+            # Détection des doublons : même nom + prénom, tous statuts confondus
+            compte_doublons = {}
+            for u in tous_adh_am:
+                cle_dbl = (str(u.get('nom', '')).strip().upper(), str(u.get('prenom', '')).strip().lower())
+                compte_doublons[cle_dbl] = compte_doublons.get(cle_dbl, 0) + 1
+
+            if filtre_am_statut == "Actifs":
+                adh_affiches = [u for u in tous_adh_am if u.get('est_actif', True)]
+            elif filtre_am_statut == "Inactifs":
+                adh_affiches = [u for u in tous_adh_am if not u.get('est_actif', True)]
+            else:
+                adh_affiches = tous_adh_am
+
+            if not adh_affiches:
+                st.info("Aucune AM ne correspond à ce filtre.")
+
+            for u in adh_affiches:
                 c1, c_edit, c_del = st.columns([0.7, 0.15, 0.15])
                 nb_defaut_affiche = int(u.get('nb_enfants_defaut', 1) or 1)
-                c1.markdown(f"**{u['nom']}** {u['prenom']}  \n<span style='color:#666;font-size:0.85rem;'>👶 {nb_defaut_affiche} enfant(s) par défaut</span>", unsafe_allow_html=True)
+                cle_u = (str(u.get('nom', '')).strip().upper(), str(u.get('prenom', '')).strip().lower())
+                est_doublon = compte_doublons.get(cle_u, 0) > 1
+                nb_ins_u = nb_ins_par_adh.get(u['id'], 0)
+                if nb_ins_u > 0:
+                    badge_ins = f"<span style='color:#b30000;'>📋 {nb_ins_u} inscription(s) enregistrée(s)</span>"
+                else:
+                    badge_ins = "<span style='color:#2e7d32;'>Aucune inscription — suppression sans incidence</span>"
+                badge_statut = "" if u.get('est_actif', True) else " <span style='color:#fff;background-color:#b71c1c;border-radius:4px;padding:1px 6px;font-size:0.75rem;margin-left:6px;'>🚫 Inactive</span>"
+
+                style_nom = "background-color:#fff3b0; padding:2px 5px; border-radius:4px;" if est_doublon else ""
+                ligne_nom = f"<span style='{style_nom}'><strong>{u.get('nom','')}</strong> {u.get('prenom','')}</span>{badge_statut}"
+                if est_doublon:
+                    ligne_nom += " <span style='color:#b8860b; font-size:0.8rem;'>⚠️ Doublon possible</span>"
+
+                c1.markdown(
+                    f"{ligne_nom}  \n<span style='color:#666;font-size:0.85rem;'>👶 {nb_defaut_affiche} enfant(s) par défaut &nbsp;·&nbsp; {badge_ins}</span>",
+                    unsafe_allow_html=True
+                )
                 if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'], nb_defaut_affiche)
                 if c_del.button("🗑️", key=f"am_del_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
 
