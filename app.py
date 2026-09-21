@@ -10,6 +10,17 @@ import urllib.parse
 import html as html_lib
 import base64
 from fpdf import FPDF
+import calendar
+
+def ajouter_mois(d, mois):
+    """Ajoute un nombre de mois (entier) à une date, en gérant les fins de mois
+    (ex: 31 janvier + 1 mois -> 28 ou 29 février selon l'année)."""
+    mois_total = d.month - 1 + mois
+    annee = d.year + mois_total // 12
+    mois_resultat = mois_total % 12 + 1
+    dernier_jour = calendar.monthrange(annee, mois_resultat)[1]
+    jour = min(d.day, dernier_jour)
+    return date(annee, mois_resultat, jour)
 
 # ==========================================
 # CONFIGURATION ET INITIALISATION
@@ -687,6 +698,18 @@ if 'at_list_gen' not in st.session_state: st.session_state['at_list_gen'] = []
 if 'super_access' not in st.session_state: st.session_state['super_access'] = False
 if 'nb_slots_nouveau_groupe' not in st.session_state: st.session_state['nb_slots_nouveau_groupe'] = 1
 if 'groupe_en_edition' not in st.session_state: st.session_state['groupe_en_edition'] = None
+if 'reset_form_nouveau_groupe' not in st.session_state: st.session_state['reset_form_nouveau_groupe'] = False
+if 'nb_slots_a_nettoyer' not in st.session_state: st.session_state['nb_slots_a_nettoyer'] = 0
+
+# Nettoyage du formulaire "➕ Créer un groupe" après une création réussie.
+# Doit impérativement s'exécuter AVANT que les widgets du formulaire (text_input/selectbox) ne soient
+# instanciés plus bas dans le script : Streamlit interdit de modifier st.session_state pour une clé
+# de widget déjà affiché lors du même passage du script.
+if st.session_state['reset_form_nouveau_groupe']:
+    st.session_state.pop('nom_nouveau_groupe', None)
+    for _i in range(st.session_state['nb_slots_a_nettoyer']):
+        st.session_state.pop(f'grp_new_am_{_i}', None)
+    st.session_state['reset_form_nouveau_groupe'] = False
 
 current_code = get_secret_code()
 res_adh_data = load_adherents()
@@ -875,7 +898,7 @@ elif menu == "📊 Suivi & Récap":
     with t2:
         c_d1, c_d2 = st.columns(2)
         d_s = c_d1.date_input("Du", date.today(), key="pub_d1", format="DD/MM/YYYY")
-        d_e = c_d2.date_input("Au", d_s + timedelta(days=90), key="pub_d2", format="DD/MM/YYYY")
+        d_e = c_d2.date_input("Au", ajouter_mois(d_s, 6), key="pub_d2", format="DD/MM/YYYY")
         
         ats_raw = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)") \
               .eq("est_actif", True) \
@@ -1243,7 +1266,7 @@ elif menu == "🔐 Administration":
             
             c1_adm, c2_adm = st.columns(2)
             d_s_a = c1_adm.date_input("Du", date.today(), key="adm_plan_d1", format="DD/MM/YYYY")
-            d_e_a = c2_adm.date_input("Au", d_s_a + timedelta(days=90), key="adm_plan_d2", format="DD/MM/YYYY")
+            d_e_a = c2_adm.date_input("Au", ajouter_mois(d_s_a, 6), key="adm_plan_d2", format="DD/MM/YYYY")
             
             query = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)").gte("date_atelier", str(d_s_a)).lte("date_atelier", str(d_e_a))
             if filtre_statut == "Actifs":
@@ -1611,6 +1634,9 @@ elif menu == "🔐 Administration":
                         lignes_membres = [{"groupe_id": nouveau_groupe_id, "adherent_id": dict_adh[a], "nb_enfants": n} for a, n in membres_valides]
                         supabase.table("groupe_membres").insert(lignes_membres).execute()
                         enregistrer_log("Admin", "Création groupe", f"Groupe '{nom_nouveau_groupe.strip()}' créé avec {len(lignes_membres)} AM")
+                        # Prépare la réinitialisation du formulaire (nom du groupe + AM vides) pour le prochain rerun
+                        st.session_state['nb_slots_a_nettoyer'] = st.session_state['nb_slots_nouveau_groupe']
+                        st.session_state['reset_form_nouveau_groupe'] = True
                         st.session_state['nb_slots_nouveau_groupe'] = 1
                         load_groupes.clear()
                         st.success("Groupe créé avec succès !")
