@@ -530,12 +530,18 @@ def secure_delete_dialog(table, item_id, label, current_code):
         else: st.error("Code incorrect")
 
 @st.dialog("✏️ Modifier une AM")
-def edit_am_dialog(am_id, nom_actuel, prenom_actuel):
+def edit_am_dialog(am_id, nom_actuel, prenom_actuel, nb_enfants_defaut_actuel=1):
     new_nom = st.text_input("Nom", value=nom_actuel).upper().strip()
     new_pre = st.text_input("Prénom", value=prenom_actuel).strip()
+    new_nb_defaut = st.number_input(
+        "Nombre d'enfants par défaut", min_value=1, max_value=10,
+        value=int(nb_enfants_defaut_actuel or 1),
+        help="Cette valeur pré-remplira automatiquement le nombre d'enfants lors des inscriptions de cette AM, partout dans le logiciel. Elle reste modifiable au cas par cas lors de chaque inscription."
+    )
     if st.button("Enregistrer"):
         if new_nom and new_pre:
-            supabase.table("adherents").update({"nom": new_nom, "prenom": new_pre}).eq("id", am_id).execute()
+            supabase.table("adherents").update({"nom": new_nom, "prenom": new_pre, "nb_enfants_defaut": int(new_nb_defaut)}).eq("id", am_id).execute()
+            load_adherents.clear()
             st.success("Modifié !"); st.rerun()
 
 @st.dialog("⚠️ Suppression Atelier")
@@ -554,6 +560,16 @@ def confirm_unsubscribe_dialog(ins_id, nom_complet, atelier_info, user_admin="Ut
     if st.button("Oui, désinscrire", type="primary"):
         enregistrer_log(user_admin, "Désinscription", f"Annulation pour {nom_complet} - {atelier_info}")
         supabase.table("inscriptions").delete().eq("id", ins_id).execute()
+        st.rerun()
+
+@st.dialog("⚠️ Supprimer le groupe")
+def delete_groupe_dialog(groupe_id, nom):
+    st.warning(f"Voulez-vous supprimer définitivement le groupe **{nom}** ?\n\nCette suppression est immédiate et n'a aucune incidence sur les inscriptions déjà enregistrées : seul le modèle de saisie rapide est supprimé.")
+    if st.button("Oui, supprimer définitivement", type="primary"):
+        supabase.table("groupe_membres").delete().eq("groupe_id", groupe_id).execute()
+        supabase.table("groupes").delete().eq("id", groupe_id).execute()
+        enregistrer_log("Admin", "Suppression groupe", f"Groupe '{nom}' supprimé")
+        load_groupes.clear()
         st.rerun()
 
 @st.dialog("🔑 Super Administration")
@@ -624,13 +640,39 @@ def load_lieux():
 def load_horaires():
     return supabase.table("horaires").select("*").eq("est_actif", True).execute().data
 
+@st.cache_data(ttl=30)
+def load_groupes():
+    """Charge les groupes d'AM avec leurs membres (nom, prénom, statut actif, nb enfants pour ce groupe)."""
+    res = supabase.table("groupes").select(
+        "id, nom, groupe_membres(id, nb_enfants, adherents(id, nom, prenom, est_actif))"
+    ).order("nom").execute()
+    groupes = []
+    for g in (res.data or []):
+        membres = []
+        for gm in (g.get('groupe_membres') or []):
+            adh = gm.get('adherents') or {}
+            membres.append({
+                "adherent_id": adh.get('id'),
+                "nom": adh.get('nom', '?'),
+                "prenom": adh.get('prenom', '?'),
+                "est_actif": bool(adh.get('est_actif', False)),
+                "nb_enfants": gm.get('nb_enfants', 0)
+            })
+        membres.sort(key=lambda m: (str(m['nom']).upper(), str(m['prenom']).upper()))
+        groupes.append({"id": g['id'], "nom": g['nom'], "membres": membres})
+    return groupes
+
 if 'at_list_gen' not in st.session_state: st.session_state['at_list_gen'] = []
 if 'super_access' not in st.session_state: st.session_state['super_access'] = False
+if 'nb_slots_nouveau_groupe' not in st.session_state: st.session_state['nb_slots_nouveau_groupe'] = 1
+if 'groupe_en_edition' not in st.session_state: st.session_state['groupe_en_edition'] = None
 
 current_code = get_secret_code()
 res_adh_data = load_adherents()
 dict_adh = {f"{a['prenom']} {a['nom']}": a['id'] for a in res_adh_data}
 liste_adh = list(dict_adh.keys())
+# Nombre d'enfants par défaut de chaque AM (pré-remplissage des inscriptions, reste modifiable au cas par cas)
+dict_adh_defaut = {a['id']: int(a.get('nb_enfants_defaut', 1) or 1) for a in res_adh_data}
 
 # Objet compatible avec le reste du code (accès via res_adh.data)
 class _DataWrapper:
@@ -736,7 +778,9 @@ if menu == "📝 Inscriptions":
                     if requiert_enfants:
                         c1, c2, c3 = st.columns([2, 1, 1])
                         qui = c1.selectbox("Assistante maternelle", ["Choisir..."] + liste_adh, index=idx_def, key=f"q_{at['id']}")
-                        nb_e = c2.number_input("Nombre d'enfants", min_value=1, max_value=10, value=1, key=f"e_{at['id']}")
+                        id_adh_qui = dict_adh.get(qui)
+                        default_nb_e = dict_adh_defaut.get(id_adh_qui, 1) if id_adh_qui else 1
+                        nb_e = c2.number_input("Nombre d'enfants", min_value=1, max_value=10, value=default_nb_e, key=f"e_{at['id']}_{id_adh_qui or 'none'}")
                         bouton_valider = c3
                     else:
                         c1, c3 = st.columns([3, 1])
@@ -915,9 +959,9 @@ elif menu == "🔐 Administration":
     
     # Affichage des onglets si authentifié (admin classique ou super admin)
     if st.session_state.admin_authenticated or st.session_state.get('super_access', False):
-        t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
+        t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
             "🏗️ Ateliers", "📊 Suivi AM", "📅 Planning Ateliers",
-            "📈 Statistiques de participation", "👥 Liste AM",
+            "📈 Statistiques de participation", "👥 Liste AM", "👥➕ Groupes",
             "📍 Lieux / Horaires", "⚙️ Sécurité", "📜 Journal des actions"
         ])
 
@@ -1259,34 +1303,96 @@ elif menu == "🔐 Administration":
                                 if cp4.button("🗑️", key=f"adm_del_plan_{p['id']}"):
                                     confirm_unsubscribe_dialog(p['id'], n_f, at_info_log, "Admin")
 
-                    with st.expander(f"➕ Inscrire une AM à cet atelier", expanded=False):
-                        if requiert_enfants_adm:
-                            ca1, ca2, ca3 = st.columns([2, 1, 1])
-                            qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
-                            nb_adm = ca2.number_input("Enfants", 1, 10, 1, key=f"adm_enf_{a['id']}")
-                            bouton_inscr_adm = ca3
-                        else:
-                            ca1, ca3 = st.columns([3, 1])
-                            qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
-                            nb_adm = 0
-                            bouton_inscr_adm = ca3
-                        if bouton_inscr_adm.button("✅ Inscrire", key=f"adm_ins_{a['id']}", type="primary"):
-                            if qui_adm != "Choisir...":
-                                id_adh = dict_adh[qui_adm]
-                                existing = next((ins for ins in ins_at if ins['adherent_id'] == id_adh), None)
-                                if existing:
-                                    if restantes - (nb_adm - existing['nb_enfants']) < 0:
-                                        st.error("Manque de places")
+                    col_inscr_am, col_inscr_grp = st.columns(2)
+
+                    with col_inscr_am:
+                        with st.expander(f"➕ Inscrire une AM à cet atelier", expanded=False):
+                            if requiert_enfants_adm:
+                                ca1, ca2, ca3 = st.columns([2, 1, 1])
+                                qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
+                                id_adh_qui_adm = dict_adh.get(qui_adm)
+                                default_nb_adm = dict_adh_defaut.get(id_adh_qui_adm, 1) if id_adh_qui_adm else 1
+                                nb_adm = ca2.number_input("Enfants", 1, 10, default_nb_adm, key=f"adm_enf_{a['id']}_{id_adh_qui_adm or 'none'}")
+                                bouton_inscr_adm = ca3
+                            else:
+                                ca1, ca3 = st.columns([3, 1])
+                                qui_adm = ca1.selectbox("AM à inscrire", ["Choisir..."] + liste_adh, key=f"adm_qui_{a['id']}")
+                                nb_adm = 0
+                                bouton_inscr_adm = ca3
+                            if bouton_inscr_adm.button("✅ Inscrire", key=f"adm_ins_{a['id']}", type="primary"):
+                                if qui_adm != "Choisir...":
+                                    id_adh = dict_adh[qui_adm]
+                                    existing = next((ins for ins in ins_at if ins['adherent_id'] == id_adh), None)
+                                    if existing:
+                                        if restantes - (nb_adm - existing['nb_enfants']) < 0:
+                                            st.error("Manque de places")
+                                        else:
+                                            supabase.table("inscriptions").update({"nb_enfants": nb_adm}).eq("id", existing['id']).execute()
+                                            enregistrer_log("Admin", "Modification (admin)", f"{qui_adm} → {nb_adm} enfants - {at_info_log}")
+                                            st.rerun()
                                     else:
-                                        supabase.table("inscriptions").update({"nb_enfants": nb_adm}).eq("id", existing['id']).execute()
-                                        enregistrer_log("Admin", "Modification (admin)", f"{qui_adm} → {nb_adm} enfants - {at_info_log}")
-                                        st.rerun()
-                                else:
-                                    if restantes - (1 + nb_adm) < 0:
-                                        st.error("Manque de places")
+                                        if restantes - (1 + nb_adm) < 0:
+                                            st.error("Manque de places")
+                                        else:
+                                            supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": a['id'], "nb_enfants": nb_adm}).execute()
+                                            enregistrer_log("Admin", "Inscription (admin)", f"{qui_adm} inscrite" + (f" (+{nb_adm} enf.)" if requiert_enfants_adm else "") + f" - {at_info_log}")
+                                            st.rerun()
+
+                    with col_inscr_grp:
+                        with st.expander("➕ Inscrire un groupe", expanded=False):
+                            groupes_disponibles = load_groupes()
+                            if not groupes_disponibles:
+                                st.info("Aucun groupe créé. Rendez-vous dans l'onglet 👥➕ Groupes pour en créer un.")
+                            else:
+                                noms_groupes = [gr['nom'] for gr in groupes_disponibles]
+                                groupe_choisi_nom = st.selectbox("Groupe à inscrire", noms_groupes, key=f"grp_choix_{a['id']}")
+                                groupe_choisi = next(gr for gr in groupes_disponibles if gr['nom'] == groupe_choisi_nom)
+
+                                lignes_apercu = []
+                                for m in groupe_choisi['membres']:
+                                    etat = " *(désactivée)*" if not m['est_actif'] else ""
+                                    if requiert_enfants_adm:
+                                        lignes_apercu.append(f"- {m['prenom']} {m['nom']} — {m['nb_enfants']} enfant(s){etat}")
                                     else:
-                                        supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": a['id'], "nb_enfants": nb_adm}).execute()
-                                        enregistrer_log("Admin", "Inscription (admin)", f"{qui_adm} inscrite" + (f" (+{nb_adm} enf.)" if requiert_enfants_adm else "") + f" - {at_info_log}")
+                                        lignes_apercu.append(f"- {m['prenom']} {m['nom']}{etat}")
+                                st.markdown("\n".join(lignes_apercu))
+
+                                nb_am_actives = sum(1 for m in groupe_choisi['membres'] if m['est_actif'])
+                                nb_enf_total = sum(m['nb_enfants'] for m in groupe_choisi['membres'] if m['est_actif']) if requiert_enfants_adm else 0
+                                places_totales = nb_am_actives + nb_enf_total
+                                suffixe_caption = f" · {nb_enf_total} enfants" if requiert_enfants_adm else ""
+                                st.caption(f"{nb_am_actives} AM{suffixe_caption} → {places_totales} places nécessaires si toutes inscrites")
+
+                                if st.button("✅ Inscrire le groupe", key=f"grp_ins_{a['id']}", type="primary"):
+                                    deja_inscrits, inactifs, a_inscrire = [], [], []
+                                    for m in groupe_choisi['membres']:
+                                        nom_complet_m = f"{m['prenom']} {m['nom']}"
+                                        if not m['est_actif']:
+                                            inactifs.append(nom_complet_m)
+                                            continue
+                                        existing_m = next((ins for ins in ins_at if ins['adherent_id'] == m['adherent_id']), None)
+                                        if existing_m:
+                                            deja_inscrits.append(nom_complet_m)
+                                            continue
+                                        nb_e_m = m['nb_enfants'] if requiert_enfants_adm else 0
+                                        a_inscrire.append({"adherent_id": m['adherent_id'], "nom_complet": nom_complet_m, "nb_enfants": nb_e_m})
+
+                                    places_necessaires = sum(1 + x['nb_enfants'] for x in a_inscrire)
+                                    if a_inscrire and places_necessaires > restantes:
+                                        st.error(f"🚨 Capacité insuffisante : il manque {places_necessaires - restantes} place(s) pour inscrire tout le groupe ({places_necessaires} nécessaires, {restantes} disponibles). Aucune inscription n'a été effectuée.")
+                                    else:
+                                        if a_inscrire:
+                                            rows_ins = [{"adherent_id": x['adherent_id'], "atelier_id": a['id'], "nb_enfants": x['nb_enfants']} for x in a_inscrire]
+                                            supabase.table("inscriptions").insert(rows_ins).execute()
+                                            noms_ajoutes = ", ".join(x['nom_complet'] for x in a_inscrire)
+                                            enregistrer_log("Admin", "Inscription groupe", f"Groupe '{groupe_choisi['nom']}' inscrit : {noms_ajoutes} - {at_info_log}")
+                                            st.success(f"✅ Groupe inscrit : {len(a_inscrire)} AM ajoutée(s).")
+                                        else:
+                                            st.info("Aucune nouvelle inscription à ajouter (toutes les AM actives du groupe sont déjà inscrites).")
+                                        if deja_inscrits:
+                                            st.info("ℹ️ Déjà inscrite(s), non modifiée(s) : " + ", ".join(deja_inscrits))
+                                        if inactifs:
+                                            st.warning("⚠️ Non inscrite(s) car plus active(s) : " + ", ".join(inactifs))
                                         st.rerun()
         
                     if index < len(ats_adm.data) - 1:
@@ -1387,18 +1493,183 @@ elif menu == "🔐 Administration":
                 c1, c2 = st.columns(2)
                 nom = c1.text_input("Nom").upper().strip()
                 pre = " ".join([w.capitalize() for w in c2.text_input("Prénom").split()]).strip()
+                nb_defaut_nouveau = st.number_input(
+                    "Nombre d'enfants par défaut", min_value=1, max_value=10, value=1,
+                    help="Cette valeur pré-remplira automatiquement le nombre d'enfants lors des inscriptions de cette AM, partout dans le logiciel. Elle reste modifiable au cas par cas lors de chaque inscription."
+                )
                 if st.form_submit_button("➕ Ajouter"):
                     if nom and pre:
-                        supabase.table("adherents").insert({"nom": nom, "prenom": pre, "est_actif": True}).execute()
+                        supabase.table("adherents").insert({"nom": nom, "prenom": pre, "est_actif": True, "nb_enfants_defaut": int(nb_defaut_nouveau)}).execute()
                         load_adherents.clear()
                         st.rerun()
             for u in res_adh.data:
                 c1, c_edit, c_del = st.columns([0.7, 0.15, 0.15])
-                c1.write(f"**{u['nom']}** {u['prenom']}")
-                if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'])
+                nb_defaut_affiche = int(u.get('nb_enfants_defaut', 1) or 1)
+                c1.markdown(f"**{u['nom']}** {u['prenom']}  \n<span style='color:#666;font-size:0.85rem;'>👶 {nb_defaut_affiche} enfant(s) par défaut</span>", unsafe_allow_html=True)
+                if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'], nb_defaut_affiche)
                 if c_del.button("🗑️", key=f"am_del_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
 
-        with t6: # 📍 LIEUX / HORAIRES
+        with t6: # 👥➕ GROUPES
+            st.subheader("👥➕ Groupes")
+            st.caption("Créez des groupes d'assistantes maternelles pour accélérer l'inscription aux ateliers gérés par le RPE. Une AM peut appartenir à plusieurs groupes, avec un nombre d'enfants différent selon le groupe. Modifier ou supprimer un groupe n'a aucune incidence sur les inscriptions déjà enregistrées.")
+
+            # --- Création d'un nouveau groupe ---
+            with st.expander("➕ Créer un groupe", expanded=False):
+                nom_nouveau_groupe = st.text_input("Nom du groupe", key="nom_nouveau_groupe")
+
+                nouveaux_membres = []
+                for i in range(st.session_state['nb_slots_nouveau_groupe']):
+                    cgm1, cgm2, cgm3 = st.columns([2, 1, 0.3])
+                    am_choisie = cgm1.selectbox("Assistante maternelle", ["Choisir..."] + liste_adh, key=f"grp_new_am_{i}")
+                    id_adh_slot = dict_adh.get(am_choisie)
+                    default_nb_slot = dict_adh_defaut.get(id_adh_slot, 1) if id_adh_slot else 1
+                    nb_enf_choisi = cgm2.number_input("Enfants", 1, 10, default_nb_slot, key=f"grp_new_enf_{i}_{id_adh_slot or 'none'}")
+                    retirer_slot = cgm3.button("🗑️", key=f"grp_new_del_{i}")
+                    nouveaux_membres.append((am_choisie, nb_enf_choisi))
+                    if retirer_slot and st.session_state['nb_slots_nouveau_groupe'] > 1:
+                        st.session_state['nb_slots_nouveau_groupe'] -= 1
+                        st.rerun()
+
+                if st.button("➕ Ajouter une AM au groupe", key="grp_new_add_slot"):
+                    st.session_state['nb_slots_nouveau_groupe'] += 1
+                    st.rerun()
+
+                if st.button("💾 Créer le groupe", key="grp_new_create", type="primary"):
+                    membres_valides = [(a, n) for a, n in nouveaux_membres if a != "Choisir..."]
+                    ids_choisis = [dict_adh[a] for a, n in membres_valides]
+                    if not nom_nouveau_groupe.strip():
+                        st.error("Merci de donner un nom au groupe.")
+                    elif not membres_valides:
+                        st.error("Ajoutez au moins une assistante maternelle au groupe.")
+                    elif len(ids_choisis) != len(set(ids_choisis)):
+                        st.error("Une même AM ne peut pas être ajoutée deux fois dans le même groupe.")
+                    else:
+                        res_g = supabase.table("groupes").insert({"nom": nom_nouveau_groupe.strip()}).execute()
+                        nouveau_groupe_id = res_g.data[0]['id']
+                        lignes_membres = [{"groupe_id": nouveau_groupe_id, "adherent_id": dict_adh[a], "nb_enfants": n} for a, n in membres_valides]
+                        supabase.table("groupe_membres").insert(lignes_membres).execute()
+                        enregistrer_log("Admin", "Création groupe", f"Groupe '{nom_nouveau_groupe.strip()}' créé avec {len(lignes_membres)} AM")
+                        st.session_state['nb_slots_nouveau_groupe'] = 1
+                        load_groupes.clear()
+                        st.success("Groupe créé avec succès !")
+                        st.rerun()
+
+            st.markdown("---")
+            st.markdown("**Groupes existants**")
+
+            groupes_existants = load_groupes()
+            if not groupes_existants:
+                st.info("Aucun groupe créé pour le moment.")
+
+            for g in groupes_existants:
+                if st.session_state['groupe_en_edition'] == g['id']:
+                    # --- Formulaire d'édition inline ---
+                    st.markdown(f"**✏️ Modification du groupe « {g['nom']} »**")
+                    nouveau_nom_g = st.text_input("Nom du groupe", value=st.session_state['edition_nom_groupe'], key=f"edit_nom_{g['id']}")
+
+                    membres_edit = st.session_state['edition_membres_groupe']
+                    for m in membres_edit:
+                        m.setdefault('nb_version', 0)
+
+                    st.caption("Le nombre d'enfants de chaque AM est repris depuis le groupe. Vous pouvez le réinitialiser à la valeur par défaut de l'AM (définie dans 👥 Liste AM) si besoin — cette réinitialisation ne concerne que ce groupe et n'a aucune incidence sur les ateliers ni sur les inscriptions déjà enregistrées.")
+                    if st.button("🔄 Réinitialiser tous les enfants selon les valeurs par défaut des AM", key=f"edit_reset_all_{g['id']}"):
+                        for m in membres_edit:
+                            if m['est_actif'] and m['am'] != "Choisir...":
+                                aid = dict_adh.get(m['am'])
+                                if aid is not None:
+                                    m['nb_enfants'] = dict_adh_defaut.get(aid, 1)
+                                    m['nb_version'] += 1
+                        st.rerun()
+
+                    idx_a_supprimer = None
+                    for idx, m in enumerate(membres_edit):
+                        cme1, cme2, cme3, cme4 = st.columns([2, 1, 0.3, 0.3])
+                        if m['est_actif']:
+                            options_am = ["Choisir..."] + liste_adh
+                            valeur_defaut = m['am'] if m['am'] in options_am else "Choisir..."
+                            am_val = cme1.selectbox("AM", options_am, index=options_am.index(valeur_defaut), key=f"edit_am_{g['id']}_{idx}", label_visibility="collapsed")
+                        else:
+                            cme1.markdown(f"🚫 {m['am']} *(AM désactivée)*")
+                            am_val = m['am']
+                        if am_val != "Choisir..." and am_val != m['am']:
+                            # L'AM de ce slot vient de changer : on repart de son nombre d'enfants par défaut
+                            default_nb_membre = dict_adh_defaut.get(dict_adh.get(am_val), 1)
+                        else:
+                            default_nb_membre = int(m['nb_enfants'])
+                        nb_val = cme2.number_input("Enfants", 1, 10, default_nb_membre, key=f"edit_nb_{g['id']}_{idx}_{am_val}_{m['nb_version']}", label_visibility="collapsed")
+                        if am_val != "Choisir..." and cme3.button("↻", key=f"edit_reset_one_{g['id']}_{idx}", help="Réinitialiser à la valeur par défaut de cette AM"):
+                            aid = dict_adh.get(am_val)
+                            if aid is not None:
+                                membres_edit[idx]['am'] = am_val
+                                membres_edit[idx]['nb_enfants'] = dict_adh_defaut.get(aid, 1)
+                                membres_edit[idx]['nb_version'] += 1
+                                st.rerun()
+                        if cme4.button("🗑️", key=f"edit_rm_{g['id']}_{idx}"):
+                            idx_a_supprimer = idx
+                        membres_edit[idx]['am'] = am_val
+                        membres_edit[idx]['nb_enfants'] = nb_val
+                    if idx_a_supprimer is not None:
+                        membres_edit.pop(idx_a_supprimer)
+                        st.rerun()
+
+                    if st.button("➕ Ajouter une AM", key=f"edit_add_{g['id']}"):
+                        membres_edit.append({"adherent_id": None, "am": "Choisir...", "nb_enfants": 1, "est_actif": True, "nb_version": 0})
+                        st.rerun()
+
+                    cbtn1, cbtn2 = st.columns(2)
+                    if cbtn1.button("💾 Enregistrer", key=f"edit_save_{g['id']}", type="primary"):
+                        lignes, ids_vus, doublon = [], set(), False
+                        for m in membres_edit:
+                            if m['est_actif']:
+                                if m['am'] == "Choisir...":
+                                    continue
+                                aid = dict_adh.get(m['am'])
+                            else:
+                                aid = m['adherent_id']
+                            if aid is None:
+                                continue
+                            if aid in ids_vus:
+                                doublon = True
+                                break
+                            ids_vus.add(aid)
+                            lignes.append({"groupe_id": g['id'], "adherent_id": aid, "nb_enfants": int(m['nb_enfants'])})
+                        if doublon:
+                            st.error("Une même AM ne peut pas être ajoutée deux fois dans le même groupe.")
+                        elif not nouveau_nom_g.strip() or not lignes:
+                            st.error("Nom et au moins une AM sont requis.")
+                        else:
+                            supabase.table("groupes").update({"nom": nouveau_nom_g.strip()}).eq("id", g['id']).execute()
+                            supabase.table("groupe_membres").delete().eq("groupe_id", g['id']).execute()
+                            supabase.table("groupe_membres").insert(lignes).execute()
+                            enregistrer_log("Admin", "Modification groupe", f"Groupe '{nouveau_nom_g.strip()}' modifié ({len(lignes)} AM)")
+                            st.session_state['groupe_en_edition'] = None
+                            load_groupes.clear()
+                            st.success("Groupe modifié avec succès !")
+                            st.rerun()
+                    if cbtn2.button("Annuler", key=f"edit_cancel_{g['id']}"):
+                        st.session_state['groupe_en_edition'] = None
+                        st.rerun()
+                    st.markdown("---")
+                else:
+                    # --- Affichage normal de la carte du groupe ---
+                    cg1, cg2, cg3 = st.columns([0.7, 0.15, 0.15])
+                    noms_membres = ", ".join(
+                        f"{m['prenom']} {m['nom']} ({m['nb_enfants']} enf.)" + ("" if m['est_actif'] else " 🚫")
+                        for m in g['membres']
+                    )
+                    cg1.markdown(f"**🧺 {g['nom']}** — {len(g['membres'])} AM  \n<span style='color:#666;font-size:0.9rem;'>{noms_membres}</span>", unsafe_allow_html=True)
+                    if cg2.button("✏️ Modifier", key=f"grp_edit_{g['id']}"):
+                        st.session_state['groupe_en_edition'] = g['id']
+                        st.session_state['edition_nom_groupe'] = g['nom']
+                        st.session_state['edition_membres_groupe'] = [
+                            {"adherent_id": m['adherent_id'], "am": f"{m['prenom']} {m['nom']}", "nb_enfants": m['nb_enfants'], "est_actif": m['est_actif']}
+                            for m in g['membres']
+                        ]
+                        st.rerun()
+                    if cg3.button("🗑️ Supprimer", key=f"grp_del_{g['id']}"):
+                        delete_groupe_dialog(g['id'], g['nom'])
+
+        with t7: # 📍 LIEUX / HORAIRES
             cl1, cl2 = st.columns(2)
             l_raw_t6 = load_lieux()
             h_raw_t6 = load_horaires()
@@ -1419,7 +1690,7 @@ elif menu == "🔐 Administration":
                     nh = st.text_input("Nouvel Horaire")
                     if st.form_submit_button("Ajouter"): supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); load_horaires.clear(); st.rerun()
 
-        with t7: # ⚙️ SÉCURITÉ
+        with t8: # ⚙️ SÉCURITÉ
             with st.form("sec_form"):
                 o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
                 if st.form_submit_button("Changer le code"):
@@ -1430,7 +1701,7 @@ elif menu == "🔐 Administration":
                     else: st.error("Ancien code incorrect")
             if st.button("🚪 Déconnexion Super Admin"): st.session_state['super_access'] = False; st.rerun()
 
-        with t8: # 📜 JOURNAL DES ACTIONS
+        with t9: # 📜 JOURNAL DES ACTIONS
             st.subheader("📜 Journal des manipulations")
             cj1, cj2 = st.columns(2)
             dj_s = cj1.date_input("Depuis le", date.today() - timedelta(days=7), format="DD/MM/YYYY", key="log_d1")
