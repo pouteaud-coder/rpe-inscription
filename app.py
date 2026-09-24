@@ -640,7 +640,10 @@ def export_suivi_inscription_pdf(title, rows, lieux_cols, totaux_par_lieu, total
             pdf.add_page()
             draw_header()
         fill_row = (i % 2 == 1)
-        pdf.set_fill_color(250, 249, 244) if fill_row else pdf.set_fill_color(255, 255, 255)
+        if fill_row:
+            pdf.set_fill_color(250, 249, 244)
+        else:
+            pdf.set_fill_color(255, 255, 255)
 
         y_start = pdf.get_y()
         x_start = pdf.get_x()
@@ -1501,12 +1504,16 @@ elif menu == "🔐 Administration":
             if not rows_si:
                 st.info("Aucune inscription trouvée sur cette période.")
             else:
-                html_si = "<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;min-width:700px;'>"
-                html_si += "<tr>"
-                html_si += "<th style='text-align:left;padding:8px 10px;background:#1b5e20;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;'>Assistante Maternelle</th>"
+                html_si = (
+                    "<div style='overflow:auto;max-height:65vh;border:1px solid #e2ddd0;border-radius:6px;'>"
+                    "<table style='border-collapse:collapse;width:100%;min-width:700px;'>"
+                )
+                html_si += "<thead><tr>"
+                html_si += "<th style='text-align:left;padding:8px 10px;background:#1b5e20;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;'>Assistante Maternelle</th>"
                 for lieu in lieux_cols_si:
-                    html_si += f"<th style='text-align:left;padding:8px 10px;background:#1b5e20;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;'>{html_lib.escape(lieu)}</th>"
-                html_si += "<th style='text-align:center;padding:8px 10px;background:#4c8c52;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;'>Total</th></tr>"
+                    html_si += f"<th style='text-align:left;padding:8px 10px;background:#1b5e20;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;'>{html_lib.escape(lieu)}</th>"
+                html_si += "<th style='text-align:center;padding:8px 10px;background:#4c8c52;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;'>Total</th></tr></thead>"
+                html_si += "<tbody>"
 
                 for idx_si, r in enumerate(rows_si):
                     bg_si = "#faf9f4" if idx_si % 2 == 1 else "#ffffff"
@@ -1539,7 +1546,7 @@ elif menu == "🔐 Administration":
                 html_si += f"<td style='padding:8px 10px;border-top:2px solid #1b5e20;color:#1b5e20;text-align:center;'>{total_general_si}</td>"
                 html_si += "</tr>"
 
-                html_si += "</table></div>"
+                html_si += "</tbody></table></div>"
                 st.markdown(html_si, unsafe_allow_html=True)
 
         with t4: # PLANNING ATELIERS (Admin)
