@@ -1487,6 +1487,11 @@ elif menu == "🔐 Administration":
             rows_si.sort(key=lambda r: (str(r['nom']).upper(), str(r['prenom']).upper()))
 
             totaux_par_lieu_si = {lieu: sum(r['cells'][lieu]['count'] for r in rows_si) for lieu in lieux_cols_si}
+
+            # On ne garde que les lieux ayant au moins 1 inscription sur la période (colonnes vides masquées)
+            lieux_cols_si = [lieu for lieu in lieux_cols_si if totaux_par_lieu_si[lieu] > 0]
+            totaux_par_lieu_si = {lieu: totaux_par_lieu_si[lieu] for lieu in lieux_cols_si}
+
             total_general_si = sum(totaux_par_lieu_si.values())
 
             periode_txt_si = f"Periode du {d_deb_si.strftime('%d/%m/%Y')} au {d_fin_si.strftime('%d/%m/%Y')} - Ateliers {filtre_statut_si.lower()}"
