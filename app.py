@@ -10,6 +10,7 @@ import urllib.parse
 import html as html_lib
 import base64
 from fpdf import FPDF
+import xlsxwriter
 import calendar
 
 def ajouter_mois(d, mois):
@@ -21,6 +22,21 @@ def ajouter_mois(d, mois):
     dernier_jour = calendar.monthrange(annee, mois_resultat)[1]
     jour = min(d.day, dernier_jour)
     return date(annee, mois_resultat, jour)
+
+def periode_defaut_suivi_inscriptions(d=None):
+    """Période par défaut de l'écran Suivi Inscription, calculée à partir de la date du jour :
+    - Entre le 1er août et le 20 décembre (année en cours) -> période du 25 août au 25 décembre (année en cours)
+    - Entre le 21 décembre (année en cours) et le 30 avril (année suivante) -> période du 1er janvier au 31 juillet (année suivante)
+    - Entre le 1er janvier et le 31 juillet (année en cours, hors cas ci-dessus) -> période du 1er janvier au 31 juillet
+      de l'année en cours (on est déjà dans cette période)."""
+    if d is None:
+        d = date.today()
+    if date(d.year, 8, 1) <= d <= date(d.year, 12, 20):
+        return date(d.year, 8, 25), date(d.year, 12, 25)
+    elif d.month == 12 and d.day >= 21:
+        return date(d.year + 1, 1, 1), date(d.year + 1, 7, 31)
+    else:
+        return date(d.year, 1, 1), date(d.year, 7, 31)
 
 # ==========================================
 # CONFIGURATION ET INITIALISATION
@@ -529,6 +545,159 @@ def export_planning_ateliers_pdf(title, ateliers_data, get_inscrits_fn):
 
     return pdf.output(dest='S').encode('latin-1')
 
+def export_suivi_inscription_excel(rows, lieux_cols, totaux_par_lieu, total_general):
+    """Export Excel du Suivi Inscription : une ligne par AM, une colonne par lieu (nombre + dates),
+    avec mise en couleur et tailles de police différentes pour la lisibilité."""
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+    ws = workbook.add_worksheet("Suivi Inscription")
+
+    fmt_header = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#1B5E20', 'align': 'center', 'valign': 'vcenter', 'font_size': 11, 'border': 1})
+    fmt_header_total = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#4C8C52', 'align': 'center', 'valign': 'vcenter', 'font_size': 11, 'border': 1})
+    fmt_am = workbook.add_format({'bold': True, 'font_size': 11, 'border': 1, 'valign': 'vcenter'})
+    fmt_am_alt = workbook.add_format({'bold': True, 'font_size': 11, 'border': 1, 'valign': 'vcenter', 'bg_color': '#FAF9F4'})
+    fmt_cell = workbook.add_format({'border': 1, 'valign': 'top', 'align': 'center', 'text_wrap': True, 'font_size': 10})
+    fmt_cell_alt = workbook.add_format({'border': 1, 'valign': 'top', 'align': 'center', 'text_wrap': True, 'font_size': 10, 'bg_color': '#FAF9F4'})
+    fmt_cell_zero = workbook.add_format({'border': 1, 'valign': 'top', 'align': 'center', 'font_size': 10, 'font_color': '#AAAAAA'})
+    fmt_cell_zero_alt = workbook.add_format({'border': 1, 'valign': 'top', 'align': 'center', 'font_size': 10, 'font_color': '#AAAAAA', 'bg_color': '#FAF9F4'})
+    fmt_total_cell = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#EEF2EA', 'font_color': '#1B5E20', 'align': 'center', 'valign': 'vcenter', 'font_size': 12})
+    fmt_total_row = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#EEF2EA', 'font_color': '#1B5E20', 'font_size': 11, 'align': 'center'})
+    fmt_total_row_nom = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#EEF2EA', 'font_color': '#1B5E20', 'font_size': 11})
+
+    ws.write(0, 0, "Assistante Maternelle", fmt_header)
+    for j, lieu in enumerate(lieux_cols, start=1):
+        ws.write(0, j, lieu, fmt_header)
+    ws.write(0, len(lieux_cols) + 1, "Total", fmt_header_total)
+
+    ws.set_column(0, 0, 26)
+    if lieux_cols:
+        ws.set_column(1, len(lieux_cols), 22)
+    ws.set_column(len(lieux_cols) + 1, len(lieux_cols) + 1, 10)
+
+    row_idx = 1
+    for i, r in enumerate(rows):
+        alt = (i % 2 == 1)
+        ws.write(row_idx, 0, f"{r['nom']} {r['prenom']}", fmt_am_alt if alt else fmt_am)
+        for j, lieu in enumerate(lieux_cols, start=1):
+            c = r['cells'].get(lieu, {"count": 0, "dates": []})
+            if c['count'] > 0:
+                texte = f"{c['count']}\n" + ", ".join(c['dates'])
+                ws.write(row_idx, j, texte, fmt_cell_alt if alt else fmt_cell)
+            else:
+                ws.write(row_idx, j, 0, fmt_cell_zero_alt if alt else fmt_cell_zero)
+        ws.write(row_idx, len(lieux_cols) + 1, r['total'], fmt_total_cell)
+        row_idx += 1
+
+    ws.write(row_idx, 0, "Total", fmt_total_row_nom)
+    for j, lieu in enumerate(lieux_cols, start=1):
+        ws.write(row_idx, j, totaux_par_lieu.get(lieu, 0), fmt_total_row)
+    ws.write(row_idx, len(lieux_cols) + 1, total_general, fmt_total_row)
+
+    workbook.close()
+    return output.getvalue()
+
+def export_suivi_inscription_pdf(title, rows, lieux_cols, totaux_par_lieu, total_general, periode_txt):
+    """Export PDF du Suivi Inscription en paysage : une ligne par AM, une colonne par lieu
+    (nombre d'inscriptions en gros/vert, dates en petit/gris), avec ligne et colonne Total."""
+    pdf = FPDF(orientation='L')
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
+    pdf.set_font("Arial", size=10)
+    pdf.set_text_color(90, 90, 90)
+    pdf.cell(0, 6, periode_txt.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+    largeur_page = pdf.w - 2 * pdf.l_margin
+    largeur_nom = 48
+    largeur_total = 20
+    nb_lieux = max(len(lieux_cols), 1)
+    largeur_lieu = (largeur_page - largeur_nom - largeur_total) / nb_lieux
+    row_h = 6
+    header_h = 9
+
+    def draw_header():
+        pdf.set_font("Arial", 'B', 9)
+        pdf.set_fill_color(27, 94, 32)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(largeur_nom, header_h, "Assistante Maternelle".encode('latin-1', 'replace').decode('latin-1'), border=1, fill=True)
+        for lieu in lieux_cols:
+            pdf.cell(largeur_lieu, header_h, lieu.encode('latin-1', 'replace').decode('latin-1')[:22], border=1, fill=True, align='C')
+        pdf.set_fill_color(76, 140, 82)
+        pdf.cell(largeur_total, header_h, "Total", border=1, fill=True, align='C', ln=True)
+        pdf.set_text_color(0, 0, 0)
+
+    draw_header()
+
+    if not rows:
+        pdf.set_font("Arial", size=11)
+        pdf.cell(0, 10, "Aucune inscription trouvee sur cette periode.", ln=True)
+        return pdf.output(dest='S').encode('latin-1')
+
+    for i, r in enumerate(rows):
+        if pdf.get_y() + row_h * 2 > pdf.h - pdf.b_margin:
+            pdf.add_page()
+            draw_header()
+        fill_row = (i % 2 == 1)
+        pdf.set_fill_color(250, 249, 244) if fill_row else pdf.set_fill_color(255, 255, 255)
+
+        y_start = pdf.get_y()
+        x_start = pdf.get_x()
+
+        pdf.set_font("Arial", 'B', 9)
+        pdf.cell(largeur_nom, row_h * 2, f"{r['nom']} {r['prenom']}".encode('latin-1', 'replace').decode('latin-1'), border=1, fill=True)
+
+        x = x_start + largeur_nom
+        for lieu in lieux_cols:
+            c = r['cells'].get(lieu, {"count": 0, "dates": []})
+            pdf.set_xy(x, y_start)
+            pdf.cell(largeur_lieu, row_h, "", border=1, fill=True)
+            pdf.set_xy(x, y_start + row_h)
+            pdf.cell(largeur_lieu, row_h, "", border=1, fill=True)
+
+            pdf.set_xy(x, y_start)
+            if c['count'] > 0:
+                pdf.set_font("Arial", 'B', 11)
+                pdf.set_text_color(27, 94, 32)
+            else:
+                pdf.set_font("Arial", size=9)
+                pdf.set_text_color(160, 160, 160)
+            pdf.cell(largeur_lieu, row_h, str(c['count']), align='C')
+            pdf.set_text_color(0, 0, 0)
+
+            if c['dates']:
+                pdf.set_xy(x, y_start + row_h)
+                pdf.set_font("Arial", size=6.5)
+                pdf.set_text_color(110, 110, 110)
+                dates_txt = ", ".join(c['dates'])[:40]
+                pdf.cell(largeur_lieu, row_h, dates_txt.encode('latin-1', 'replace').decode('latin-1'), align='C')
+                pdf.set_text_color(0, 0, 0)
+            x += largeur_lieu
+
+        pdf.set_xy(x, y_start)
+        pdf.set_font("Arial", 'B', 11)
+        pdf.set_fill_color(238, 242, 234)
+        pdf.set_text_color(27, 94, 32)
+        pdf.cell(largeur_total, row_h * 2, str(r['total']), border=1, fill=True, align='C')
+        pdf.set_text_color(0, 0, 0)
+
+        pdf.set_xy(x_start, y_start + row_h * 2)
+
+    if pdf.get_y() + row_h * 2 > pdf.h - pdf.b_margin:
+        pdf.add_page()
+        draw_header()
+    pdf.set_fill_color(238, 242, 234)
+    pdf.set_text_color(27, 94, 32)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(largeur_nom, row_h * 2, "Total", border=1, fill=True)
+    for lieu in lieux_cols:
+        pdf.cell(largeur_lieu, row_h * 2, str(totaux_par_lieu.get(lieu, 0)), border=1, fill=True, align='C')
+    pdf.cell(largeur_total, row_h * 2, str(total_general), border=1, fill=True, align='C', ln=True)
+    pdf.set_text_color(0, 0, 0)
+
+    return pdf.output(dest='S').encode('latin-1')
+
 # --- DIALOGUES (inchangés) ---
 @st.dialog("⚠️ Confirmation")
 def secure_delete_dialog(table, item_id, label, current_code):
@@ -652,17 +821,6 @@ def load_adherents_tous():
     """Charge TOUTES les AM (actives et inactives) — utilisé pour l'écran Liste AM (filtre de statut, doublons)."""
     res = supabase.table("adherents").select("*").order("nom").order("prenom").execute()
     return res.data
-
-@st.cache_data(ttl=60)
-def load_nb_inscriptions_par_adherent():
-    """Nombre d'inscriptions déjà enregistrées, par AM — sert à savoir si une AM peut être supprimée sans conséquence."""
-    res = supabase.table("inscriptions").select("adherent_id").execute()
-    compte = {}
-    for row in (res.data or []):
-        aid = row.get('adherent_id')
-        if aid is not None:
-            compte[aid] = compte.get(aid, 0) + 1
-    return compte
 
 @st.cache_data(ttl=60)
 def load_lieux():
@@ -1003,8 +1161,8 @@ elif menu == "🔐 Administration":
     
     # Affichage des onglets si authentifié (admin classique ou super admin)
     if st.session_state.admin_authenticated or st.session_state.get('super_access', False):
-        t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
-            "🏗️ Ateliers", "📊 Suivi AM", "📅 Planning Ateliers",
+        t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 = st.tabs([
+            "🏗️ Ateliers", "📊 Suivi AM", "🔎 Suivi Inscription", "📅 Planning Ateliers",
             "📈 Statistiques de participation", "👥 Liste AM", "👥➕ Groupes",
             "📍 Lieux / Horaires", "⚙️ Sécurité", "📜 Journal des actions"
         ])
@@ -1259,7 +1417,132 @@ elif menu == "🔐 Administration":
             else:
                 st.info("Aucune inscription trouvée pour les AM sélectionnées.")
 
-        with t3: # PLANNING ATELIERS (Admin)
+        with t3: # 🔎 SUIVI INSCRIPTION
+            st.subheader("🔎 Suivi Inscription")
+            st.caption("Nombre d'inscriptions par assistante maternelle et par lieu, sur la période choisie.")
+
+            debut_defaut_si, fin_defaut_si = periode_defaut_suivi_inscriptions()
+
+            csi1, csi2, csi3 = st.columns([1, 1, 1.6])
+            d_deb_si = csi1.date_input("Du", debut_defaut_si, key="si_date_debut", format="DD/MM/YYYY")
+            d_fin_si = csi2.date_input("Au", fin_defaut_si, key="si_date_fin", format="DD/MM/YYYY")
+            csi3.markdown(
+                f"<div style='font-size:0.78rem;color:#666;padding-top:28px;'>Période calculée automatiquement à partir d'aujourd'hui "
+                f"({date.today().strftime('%d/%m/%Y')}) ; modifiable librement.</div>",
+                unsafe_allow_html=True
+            )
+
+            filtre_statut_si = st.radio("Ateliers :", ["Actifs", "Inactifs", "Tous"], index=0, horizontal=True, key="si_filtre_statut")
+
+            query_si = supabase.table("ateliers").select("id, date_atelier, est_actif, lieux(nom)") \
+                .gte("date_atelier", str(d_deb_si)).lte("date_atelier", str(d_fin_si))
+            if filtre_statut_si == "Actifs":
+                query_si = query_si.eq("est_actif", True)
+            elif filtre_statut_si == "Inactifs":
+                query_si = query_si.eq("est_actif", False)
+            ateliers_si = query_si.execute().data or []
+            at_by_id_si = {a['id']: a for a in ateliers_si}
+
+            if at_by_id_si:
+                ins_si = supabase.table("inscriptions").select("adherent_id, atelier_id, adherents(nom, prenom)") \
+                    .in_("atelier_id", list(at_by_id_si.keys())).execute().data or []
+            else:
+                ins_si = []
+
+            # Colonnes = tous les lieux actifs, plus tout lieu apparaissant dans la période (au cas où désactivé depuis)
+            lieux_cols_si = sorted(set([l['nom'] for l in load_lieux()]) | set(
+                a['lieux']['nom'] for a in ateliers_si if a.get('lieux')
+            ))
+
+            # Regroupement : AM -> lieu -> {count, dates}
+            matrice_si = {}
+            for ins in ins_si:
+                at_si = at_by_id_si.get(ins['atelier_id'])
+                adh_si = ins.get('adherents') or {}
+                aid_si = ins.get('adherent_id')
+                if not at_si or aid_si is None or not at_si.get('lieux'):
+                    continue
+                lieu_nom_si = at_si['lieux']['nom']
+                entree = matrice_si.setdefault(aid_si, {"nom": adh_si.get('nom', '?'), "prenom": adh_si.get('prenom', '?'), "par_lieu": {}})
+                cellule = entree["par_lieu"].setdefault(lieu_nom_si, {"count": 0, "dates": []})
+                cellule["count"] += 1
+                cellule["dates"].append(at_si['date_atelier'])
+
+            rows_si = []
+            for aid_si, entree in matrice_si.items():
+                cells_fmt = {}
+                for lieu in lieux_cols_si:
+                    c = entree["par_lieu"].get(lieu)
+                    if c:
+                        dates_aff = [datetime.strptime(dd, "%Y-%m-%d").strftime("%d/%m") for dd in sorted(c['dates'])]
+                        cells_fmt[lieu] = {"count": c['count'], "dates": dates_aff}
+                    else:
+                        cells_fmt[lieu] = {"count": 0, "dates": []}
+                total_am_si = sum(v['count'] for v in cells_fmt.values())
+                rows_si.append({"nom": entree['nom'], "prenom": entree['prenom'], "cells": cells_fmt, "total": total_am_si})
+
+            rows_si.sort(key=lambda r: (str(r['nom']).upper(), str(r['prenom']).upper()))
+
+            totaux_par_lieu_si = {lieu: sum(r['cells'][lieu]['count'] for r in rows_si) for lieu in lieux_cols_si}
+            total_general_si = sum(totaux_par_lieu_si.values())
+
+            periode_txt_si = f"Periode du {d_deb_si.strftime('%d/%m/%Y')} au {d_fin_si.strftime('%d/%m/%Y')} - Ateliers {filtre_statut_si.lower()}"
+
+            ce_si1, ce_si2 = st.columns(2)
+            ce_si1.download_button(
+                "📊 Excel", data=export_suivi_inscription_excel(rows_si, lieux_cols_si, totaux_par_lieu_si, total_general_si),
+                file_name="suivi_inscription.xlsx", key="si_excel"
+            )
+            ce_si2.download_button(
+                "📄 PDF", data=export_suivi_inscription_pdf("Suivi Inscription", rows_si, lieux_cols_si, totaux_par_lieu_si, total_general_si, periode_txt_si),
+                file_name="suivi_inscription.pdf", key="si_pdf"
+            )
+
+            if not rows_si:
+                st.info("Aucune inscription trouvée sur cette période.")
+            else:
+                html_si = "<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;min-width:700px;'>"
+                html_si += "<tr>"
+                html_si += "<th style='text-align:left;padding:8px 10px;background:#1b5e20;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;'>Assistante Maternelle</th>"
+                for lieu in lieux_cols_si:
+                    html_si += f"<th style='text-align:left;padding:8px 10px;background:#1b5e20;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;'>{html_lib.escape(lieu)}</th>"
+                html_si += "<th style='text-align:center;padding:8px 10px;background:#4c8c52;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;'>Total</th></tr>"
+
+                for idx_si, r in enumerate(rows_si):
+                    bg_si = "#faf9f4" if idx_si % 2 == 1 else "#ffffff"
+                    html_si += f"<tr style='background:{bg_si};'>"
+                    html_si += (
+                        f"<td style='padding:8px 10px;border-top:1px solid #e2ddd0;font-weight:700;white-space:nowrap;'>"
+                        f"{html_lib.escape(r['nom'])} <span style='font-weight:400;color:#666;'>{html_lib.escape(r['prenom'])}</span></td>"
+                    )
+                    for lieu in lieux_cols_si:
+                        c = r['cells'][lieu]
+                        if c['count'] > 0:
+                            dates_txt = ", ".join(c['dates'])
+                            html_si += (
+                                f"<td style='padding:8px 10px;border-top:1px solid #e2ddd0;'>"
+                                f"<span style='font-size:1.05rem;font-weight:800;color:#1b5e20;'>{c['count']}</span><br>"
+                                f"<span style='font-size:0.72rem;color:#777;'>{html_lib.escape(dates_txt)}</span></td>"
+                            )
+                        else:
+                            html_si += "<td style='padding:8px 10px;border-top:1px solid #e2ddd0;color:#bbb;'>0</td>"
+                    html_si += (
+                        f"<td style='padding:8px 10px;border-top:1px solid #e2ddd0;text-align:center;font-weight:800;"
+                        f"color:#1b5e20;background:#eef2ea;'>{r['total']}</td>"
+                    )
+                    html_si += "</tr>"
+
+                html_si += "<tr style='background:#eef2ea;font-weight:700;'>"
+                html_si += "<td style='padding:8px 10px;border-top:2px solid #1b5e20;color:#1b5e20;'>Total</td>"
+                for lieu in lieux_cols_si:
+                    html_si += f"<td style='padding:8px 10px;border-top:2px solid #1b5e20;color:#1b5e20;text-align:center;'>{totaux_par_lieu_si[lieu]}</td>"
+                html_si += f"<td style='padding:8px 10px;border-top:2px solid #1b5e20;color:#1b5e20;text-align:center;'>{total_general_si}</td>"
+                html_si += "</tr>"
+
+                html_si += "</table></div>"
+                st.markdown(html_si, unsafe_allow_html=True)
+
+        with t4: # PLANNING ATELIERS (Admin)
             st.subheader("📅 Planning des Ateliers")
             
             filtre_statut = st.radio("Filtrer par statut :", ["Tous", "Actifs", "Inactifs"], horizontal=True, key="admin_plan_filtre")
@@ -1444,7 +1727,7 @@ elif menu == "🔐 Administration":
             else:
                 st.info("Aucun atelier trouvé sur cette période.")
 
-        with t4: # STATS
+        with t5: # STATS
             st.subheader("📈 Statistiques de participation")
             cs1, cs2 = st.columns(2)
             ds_stat = cs1.date_input("Date début", date.today().replace(day=1), key="stat_d1", format="DD/MM/YYYY")
@@ -1532,7 +1815,7 @@ elif menu == "🔐 Administration":
                         horaire_lib = at['horaires']['libelle']
                         st.write(f"- {date_fr} : **{at['titre']}** ({lieu_nom} - {horaire_lib})")
                         
-        with t5: # 👥 LISTE AM
+        with t6: # 👥 LISTE AM
             with st.form("add_am"):
                 c1, c2 = st.columns(2)
                 nom = c1.text_input("Nom").upper().strip()
@@ -1552,7 +1835,6 @@ elif menu == "🔐 Administration":
             filtre_am_statut = st.radio("Filtrer par statut :", ["Actifs", "Inactifs", "Tous"], index=0, horizontal=True, key="am_filtre_statut")
 
             tous_adh_am = load_adherents_tous()
-            nb_ins_par_adh = load_nb_inscriptions_par_adherent()
 
             # Détection des doublons : même nom + prénom, tous statuts confondus
             compte_doublons = {}
@@ -1575,11 +1857,6 @@ elif menu == "🔐 Administration":
                 nb_defaut_affiche = int(u.get('nb_enfants_defaut', 1) or 1)
                 cle_u = (str(u.get('nom', '')).strip().upper(), str(u.get('prenom', '')).strip().lower())
                 est_doublon = compte_doublons.get(cle_u, 0) > 1
-                nb_ins_u = nb_ins_par_adh.get(u['id'], 0)
-                if nb_ins_u > 0:
-                    badge_ins = f"<span style='color:#b30000;'>📋 {nb_ins_u} inscription(s) enregistrée(s)</span>"
-                else:
-                    badge_ins = "<span style='color:#2e7d32;'>Aucune inscription — suppression sans incidence</span>"
                 badge_statut = "" if u.get('est_actif', True) else " <span style='color:#fff;background-color:#b71c1c;border-radius:4px;padding:1px 6px;font-size:0.75rem;margin-left:6px;'>🚫 Inactive</span>"
 
                 style_nom = "background-color:#fff3b0; padding:2px 5px; border-radius:4px;" if est_doublon else ""
@@ -1588,13 +1865,13 @@ elif menu == "🔐 Administration":
                     ligne_nom += " <span style='color:#b8860b; font-size:0.8rem;'>⚠️ Doublon possible</span>"
 
                 c1.markdown(
-                    f"{ligne_nom}  \n<span style='color:#666;font-size:0.85rem;'>👶 {nb_defaut_affiche} enfant(s) par défaut &nbsp;·&nbsp; {badge_ins}</span>",
+                    f"{ligne_nom}  \n<span style='color:#666;font-size:0.85rem;'>👶 {nb_defaut_affiche} enfant(s) par défaut</span>",
                     unsafe_allow_html=True
                 )
                 if c_edit.button("✏️ Modifier", key=f"am_edit_{u['id']}"): edit_am_dialog(u['id'], u['nom'], u['prenom'], nb_defaut_affiche)
                 if c_del.button("🗑️", key=f"am_del_{u['id']}"): secure_delete_dialog("adherents", u['id'], f"{u['prenom']} {u['nom']}", current_code)
 
-        with t6: # 👥➕ GROUPES
+        with t7: # 👥➕ GROUPES
             st.subheader("👥➕ Groupes")
             st.caption("Créez des groupes d'assistantes maternelles pour accélérer l'inscription aux ateliers gérés par le RPE. Une AM peut appartenir à plusieurs groupes, avec un nombre d'enfants différent selon le groupe. Modifier ou supprimer un groupe n'a aucune incidence sur les inscriptions déjà enregistrées.")
 
@@ -1757,7 +2034,7 @@ elif menu == "🔐 Administration":
                     if cg3.button("🗑️ Supprimer", key=f"grp_del_{g['id']}"):
                         delete_groupe_dialog(g['id'], g['nom'])
 
-        with t7: # 📍 LIEUX / HORAIRES
+        with t8: # 📍 LIEUX / HORAIRES
             cl1, cl2 = st.columns(2)
             l_raw_t6 = load_lieux()
             h_raw_t6 = load_horaires()
@@ -1778,7 +2055,7 @@ elif menu == "🔐 Administration":
                     nh = st.text_input("Nouvel Horaire")
                     if st.form_submit_button("Ajouter"): supabase.table("horaires").insert({"libelle": nh, "est_actif": True}).execute(); load_horaires.clear(); st.rerun()
 
-        with t8: # ⚙️ SÉCURITÉ
+        with t9: # ⚙️ SÉCURITÉ
             with st.form("sec_form"):
                 o, n = st.text_input("Ancien code", type="password"), st.text_input("Nouveau code", type="password")
                 if st.form_submit_button("Changer le code"):
@@ -1789,7 +2066,7 @@ elif menu == "🔐 Administration":
                     else: st.error("Ancien code incorrect")
             if st.button("🚪 Déconnexion Super Admin"): st.session_state['super_access'] = False; st.rerun()
 
-        with t9: # 📜 JOURNAL DES ACTIONS
+        with t10: # 📜 JOURNAL DES ACTIONS
             st.subheader("📜 Journal des manipulations")
             cj1, cj2 = st.columns(2)
             dj_s = cj1.date_input("Depuis le", date.today() - timedelta(days=7), format="DD/MM/YYYY", key="log_d1")
