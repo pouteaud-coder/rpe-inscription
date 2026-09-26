@@ -717,10 +717,28 @@ def export_suivi_inscription_pdf(title, rows, lieux_cols, totaux_par_lieu, total
 
     return pdf.output(dest='S').encode('latin-1')
 
+def _pdf_wrap_lines(pdf, text, largeur, marge=3):
+    """Découpe `text` en plusieurs lignes pour tenir dans `largeur` (mm), avec la police déjà réglée sur pdf."""
+    mots = text.split(" ")
+    lignes = []
+    courante = ""
+    for mot in mots:
+        essai = (courante + " " + mot).strip()
+        if pdf.get_string_width(essai) <= largeur - marge:
+            courante = essai
+        else:
+            if courante:
+                lignes.append(courante)
+            courante = mot
+    if courante:
+        lignes.append(courante)
+    return lignes or [""]
+
 def export_places_restantes_pdf(title, lignes_par_lieu, ordre_lieux, periode_txt):
-    """Export PDF de l'écran Places restantes : ateliers non complets groupés par lieu
-    (en-tête coloré par lieu, comme à l'écran), triés par places restantes décroissantes."""
-    pdf = FPDF()
+    """Export PDF de l'écran Places restantes : tableau (Date | Atelier | Places restantes),
+    ateliers non complets groupés par lieu (bandeau coloré par lieu, comme à l'écran),
+    triés par places restantes décroissantes dans chaque lieu."""
+    pdf = FPDF(orientation='L')
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
@@ -735,9 +753,27 @@ def export_places_restantes_pdf(title, lignes_par_lieu, ordre_lieux, periode_txt
         pdf.cell(0, 10, "Aucun atelier avec des places restantes sur cette periode et ces filtres.", ln=True)
         return pdf.output(dest='S').encode('latin-1')
 
+    largeur_page = pdf.w - 2 * pdf.l_margin
+    largeur_date = 38
+    largeur_places = 42
+    largeur_atelier = largeur_page - largeur_date - largeur_places
+    ligne_h = 5.5
+
+    def dessiner_entete_colonnes():
+        pdf.set_font("Arial", 'B', 8)
+        pdf.set_fill_color(232, 230, 220)
+        pdf.set_text_color(100, 95, 80)
+        pdf.cell(largeur_date, 6.5, "DATE", border=1, fill=True)
+        pdf.cell(largeur_atelier, 6.5, "ATELIER", border=1, fill=True)
+        pdf.cell(largeur_places, 6.5, "PLACES RESTANTES", border=1, fill=True, align='C', ln=True)
+        pdf.set_text_color(0, 0, 0)
+
     for nom_lieu in ordre_lieux:
-        lignes = lignes_par_lieu[nom_lieu]
+        lignes = sorted(lignes_par_lieu[nom_lieu], key=lambda r: -r['restantes'])
         r, g, b = hex_vers_rgb(get_color(nom_lieu))
+
+        if pdf.get_y() + 22 > pdf.h - pdf.b_margin:
+            pdf.add_page()
 
         pdf.set_fill_color(r, g, b)
         pdf.set_text_color(255, 255, 255)
@@ -747,13 +783,50 @@ def export_places_restantes_pdf(title, lignes_par_lieu, ordre_lieux, periode_txt
         pdf.cell(0, 8, entete.encode('latin-1', 'replace').decode('latin-1'), ln=True, fill=True)
         pdf.set_text_color(0, 0, 0)
 
-        pdf.set_font("Arial", size=10)
-        for r_ligne in lignes:
-            date_fr = format_date_fr_simple(r_ligne['date'])
-            verrou_txt = "  [VERROUILLE]" if r_ligne['verrouille'] else ""
+        dessiner_entete_colonnes()
+
+        for i, r_ligne in enumerate(lignes):
+            date_fr = format_date_fr_simple(r_ligne['date']).encode('latin-1', 'replace').decode('latin-1')
+            titre_txt = r_ligne['titre']
+            if r_ligne['verrouille']:
+                titre_txt += "  [VERROUILLE]"
+            titre_txt = titre_txt.encode('latin-1', 'replace').decode('latin-1')
+
+            pdf.set_font("Arial", size=9)
+            lignes_titre = _pdf_wrap_lines(pdf, titre_txt, largeur_atelier)
+            row_h = ligne_h * len(lignes_titre)
+
+            if pdf.get_y() + row_h > pdf.h - pdf.b_margin:
+                pdf.add_page()
+                dessiner_entete_colonnes()
+
+            fond_alterne = (250, 249, 244) if (i % 2 == 1) else (255, 255, 255)
+
+            x0, y0 = pdf.get_x(), pdf.get_y()
+
+            pdf.set_fill_color(*fond_alterne)
+            pdf.set_font("Arial", size=9)
+            pdf.cell(largeur_date, row_h, date_fr, border=1, fill=True)
+
+            pdf.set_xy(x0 + largeur_date, y0)
+            pdf.set_fill_color(*fond_alterne)
+            pdf.multi_cell(largeur_atelier, ligne_h, titre_txt, border=1, fill=True)
+
+            est_faible = r_ligne['restantes'] <= 3
             suffixe_place = "place" if r_ligne['restantes'] <= 1 else "places"
-            ligne = f"     {date_fr}  |  {r_ligne['titre']}{verrou_txt}  —  {r_ligne['restantes']} {suffixe_place} restantes"
-            pdf.cell(0, 6, ligne.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+            texte_places = f"{r_ligne['restantes']} {suffixe_place}"
+            pdf.set_xy(x0 + largeur_date + largeur_atelier, y0)
+            if est_faible:
+                pdf.set_fill_color(253, 242, 224)
+                pdf.set_text_color(180, 83, 9)
+            else:
+                pdf.set_fill_color(234, 241, 233)
+                pdf.set_text_color(27, 94, 32)
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(largeur_places, row_h, texte_places, border=1, fill=True, align='C')
+            pdf.set_text_color(0, 0, 0)
+
+            pdf.set_xy(x0, y0 + row_h)
 
         pdf.ln(3)
 
