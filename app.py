@@ -738,7 +738,7 @@ def export_places_restantes_pdf(title, lignes_par_lieu, ordre_lieux, periode_txt
     """Export PDF de l'écran Places restantes : tableau (Date | Atelier | Places restantes),
     ateliers non complets groupés par lieu (bandeau coloré par lieu, comme à l'écran),
     triés par places restantes décroissantes dans chaque lieu."""
-    pdf = FPDF(orientation='L')
+    pdf = FPDF()  # A4 portrait par défaut
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
@@ -753,9 +753,19 @@ def export_places_restantes_pdf(title, lignes_par_lieu, ordre_lieux, periode_txt
         pdf.cell(0, 10, "Aucun atelier avec des places restantes sur cette periode et ces filtres.", ln=True)
         return pdf.output(dest='S').encode('latin-1')
 
+    def date_aff(d):
+        return format_date_fr_simple(d).encode('latin-1', 'replace').decode('latin-1')
+
     largeur_page = pdf.w - 2 * pdf.l_margin
-    largeur_date = 38
-    largeur_places = 42
+    largeur_places = 36
+
+    # La colonne Date est calculée sur la date la plus longue réellement présente (ex : "Vendredi 13 novembre 2026")
+    # pour ne jamais être coupée ; la colonne Atelier récupère le reste de la largeur.
+    pdf.set_font("Arial", size=9)
+    toutes_dates_txt = [date_aff(l['date']) for lignes in lignes_par_lieu.values() for l in lignes]
+    largeur_date = max((pdf.get_string_width(d) for d in toutes_dates_txt), default=45) + 6
+    largeur_date = max(45, min(largeur_date, 65))
+
     largeur_atelier = largeur_page - largeur_date - largeur_places
     ligne_h = 5.5
 
@@ -765,7 +775,7 @@ def export_places_restantes_pdf(title, lignes_par_lieu, ordre_lieux, periode_txt
         pdf.set_text_color(100, 95, 80)
         pdf.cell(largeur_date, 6.5, "DATE", border=1, fill=True)
         pdf.cell(largeur_atelier, 6.5, "ATELIER", border=1, fill=True)
-        pdf.cell(largeur_places, 6.5, "PLACES RESTANTES", border=1, fill=True, align='C', ln=True)
+        pdf.cell(largeur_places, 6.5, "PLACES", border=1, fill=True, align='C', ln=True)
         pdf.set_text_color(0, 0, 0)
 
     for nom_lieu in ordre_lieux:
@@ -786,7 +796,7 @@ def export_places_restantes_pdf(title, lignes_par_lieu, ordre_lieux, periode_txt
         dessiner_entete_colonnes()
 
         for i, r_ligne in enumerate(lignes):
-            date_fr = format_date_fr_simple(r_ligne['date']).encode('latin-1', 'replace').decode('latin-1')
+            date_fr = date_aff(r_ligne['date'])
             titre_txt = r_ligne['titre']
             if r_ligne['verrouille']:
                 titre_txt += "  [VERROUILLE]"
@@ -1368,17 +1378,22 @@ elif menu == "📊 Suivi & Récap":
                         f"({nb_at_pr} atelier{'s' if nb_at_pr > 1 else ''} non complet{'s' if nb_at_pr > 1 else ''})</span></div>",
                         unsafe_allow_html=True
                     )
-                    html_pr = "<table style='border-collapse:collapse;width:100%;'>"
+                    html_pr = (
+                        "<div style='overflow-x:auto;'>"
+                        "<table style='border-collapse:collapse;width:100%;table-layout:fixed;'>"
+                        "<colgroup><col style='width:26%;'><col style='width:44%;'><col style='width:30%;'></colgroup>"
+                    )
                     html_pr += (
                         "<tr>"
-                        "<th style='text-align:left;padding:6px 8px;font-size:0.72rem;text-transform:uppercase;color:#777;'>Date</th>"
-                        "<th style='text-align:left;padding:6px 8px;font-size:0.72rem;text-transform:uppercase;color:#777;'>Atelier</th>"
-                        "<th style='text-align:left;padding:6px 8px;font-size:0.72rem;text-transform:uppercase;color:#777;'>Places restantes</th>"
+                        "<th style='text-align:left;padding:6px 4px;font-size:0.7rem;text-transform:uppercase;color:#777;'>Date</th>"
+                        "<th style='text-align:left;padding:6px 4px;font-size:0.7rem;text-transform:uppercase;color:#777;'>Atelier</th>"
+                        "<th style='text-align:left;padding:6px 4px;font-size:0.7rem;text-transform:uppercase;color:#777;'>Places</th>"
                         "</tr>"
                     )
                     for r in lignes_pr:
+                        date_courte = datetime.strptime(r['date'], "%Y-%m-%d").strftime("%d/%m/%Y")
                         verrou_txt = (
-                            " <span style='font-size:0.76rem;color:#e65100;font-weight:600;'>🔒 verrouillé</span>"
+                            "<br><span style='font-size:0.72rem;color:#e65100;font-weight:600;'>🔒 verrouillé</span>"
                             if r['verrouille'] else ""
                         )
                         est_faible = r['restantes'] <= 3
@@ -1387,14 +1402,14 @@ elif menu == "📊 Suivi & Récap":
                         suffixe_place = "place" if r['restantes'] <= 1 else "places"
                         html_pr += (
                             "<tr>"
-                            f"<td style='padding:8px;border-top:1px solid #e2ddd0;white-space:nowrap;'>{format_date_fr_simple(r['date'])}</td>"
-                            f"<td style='padding:8px;border-top:1px solid #e2ddd0;font-weight:600;'>{html_lib.escape(r['titre'])}{verrou_txt}</td>"
-                            f"<td style='padding:8px;border-top:1px solid #e2ddd0;'>"
-                            f"<span style='font-family:monospace;font-weight:700;padding:2px 10px;border-radius:999px;"
+                            f"<td style='padding:6px 4px;border-top:1px solid #e2ddd0;white-space:nowrap;font-size:0.85rem;'>{date_courte}</td>"
+                            f"<td style='padding:6px 4px;border-top:1px solid #e2ddd0;font-weight:600;font-size:0.85rem;word-break:break-word;'>{html_lib.escape(r['titre'])}{verrou_txt}</td>"
+                            f"<td style='padding:6px 4px;border-top:1px solid #e2ddd0;'>"
+                            f"<span style='font-weight:700;padding:2px 8px;border-radius:999px;font-size:0.82rem;white-space:nowrap;"
                             f"background:{fond_badge};color:{couleur_badge};'>{r['restantes']} {suffixe_place}</span></td>"
                             "</tr>"
                         )
-                    html_pr += "</table>"
+                    html_pr += "</table></div>"
                     st.markdown(html_pr, unsafe_allow_html=True)
 
 # ==========================================
