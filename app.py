@@ -128,7 +128,32 @@ st.markdown("""
     .stDataFrame table tbody tr td:nth-child(2) {
         text-align: center !important;
     }
-    
+
+    /* ---------------------------------------------------------------------
+       OPTIMISATION MOBILE : sur téléphone (écran étroit), toutes les lignes
+       en colonnes côte à côte (st.columns) passent en une seule colonne
+       empilée, pleine largeur. Les boutons, champs et badges restent ainsi
+       lisibles et faciles à toucher au lieu d'être écrasés sur une ligne
+       trop étroite. Sur ordinateur (écran large), rien ne change.
+       ------------------------------------------------------------------- */
+    @media (max-width: 600px) {
+        div[data-testid="stHorizontalBlock"] {
+            flex-direction: column !important;
+            gap: 0.35rem !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+            width: 100% !important;
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+        /* Un peu d'air entre les badges qui passent à la ligne */
+        .lieu-badge, .compteur-badge, .badge-verrouille {
+            margin-top: 3px;
+            margin-bottom: 3px;
+        }
+    }
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -1702,6 +1727,7 @@ elif menu == "🔐 Administration":
         with t3: # 🔎 SUIVI INSCRIPTION
             st.subheader("🔎 Suivi Inscription")
             st.caption("Nombre d'inscriptions par assistante maternelle et par lieu, sur la période choisie.")
+            st.caption("📱 Sur téléphone : ce tableau a une colonne par lieu, faites glisser le doigt horizontalement pour voir tous les lieux.")
 
             debut_defaut_si, fin_defaut_si = periode_defaut_suivi_inscriptions()
 
