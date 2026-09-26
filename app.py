@@ -38,6 +38,17 @@ def periode_defaut_suivi_inscriptions(d=None):
     else:
         return date(d.year, 1, 1), date(d.year, 7, 31)
 
+def fin_defaut_places_restantes(d=None):
+    """Date de fin par défaut de l'écran Places restantes : le 31 juillet suivant la date du jour
+    (année en cours si le 31 juillet n'est pas encore passé, sinon année suivante).
+    Ex : le 30/09/2026 -> 31/07/2027 ; le 01/01/2027 -> 31/07/2027."""
+    if d is None:
+        d = date.today()
+    juillet_annee_courante = date(d.year, 7, 31)
+    if d <= juillet_annee_courante:
+        return juillet_annee_courante
+    return date(d.year + 1, 7, 31)
+
 # ==========================================
 # CONFIGURATION ET INITIALISATION
 # ==========================================
@@ -749,6 +760,25 @@ def confirm_unsubscribe_dialog(ins_id, nom_complet, atelier_info, user_admin="Ut
         supabase.table("inscriptions").delete().eq("id", ins_id).execute()
         st.rerun()
 
+@st.dialog("✅ Confirmation d'inscription")
+def confirm_inscription_dialog(nom_complet, id_adh, atelier_id, date_atelier, nb_enfants, requiert_enfants, at_info_log, user_admin="Utilisateur"):
+    """Double validation avant d'enregistrer une inscription : récapitulatif + Confirmer / Modifier / Annuler."""
+    date_txt = format_date_fr_simple(date_atelier)
+    if requiert_enfants:
+        suffixe = "enfant" if nb_enfants <= 1 else "enfants"
+        st.markdown(f"Inscription de **{nom_complet}** à l'atelier du **{date_txt}** pour **{nb_enfants} {suffixe}**.")
+    else:
+        st.markdown(f"Inscription de **{nom_complet}** à l'atelier du **{date_txt}**.")
+    c1, c2, c3 = st.columns(3)
+    if c1.button("✅ Confirmer l'inscription", type="primary", use_container_width=True):
+        supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": atelier_id, "nb_enfants": nb_enfants}).execute()
+        enregistrer_log(user_admin, "Inscription", f"{nom_complet} s'inscrit" + (f" (+{nb_enfants} enf.)" if requiert_enfants else "") + f" - {at_info_log}")
+        st.rerun()
+    if c2.button("✏️ Modifier", use_container_width=True):
+        st.rerun()
+    if c3.button("❌ Annuler", use_container_width=True):
+        st.rerun()
+
 @st.dialog("⚠️ Supprimer le groupe")
 def delete_groupe_dialog(groupe_id, nom):
     st.warning(f"Voulez-vous supprimer définitivement le groupe **{nom}** ?\n\nCette suppression est immédiate et n'a aucune incidence sur les inscriptions déjà enregistrées : seul le modèle de saisie rapide est supprimé.")
@@ -1002,16 +1032,14 @@ if menu == "📝 Inscriptions":
                                 if restantes - (1 + nb_e) < 0:
                                     st.error("Manque de places")
                                 else:
-                                    supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": at['id'], "nb_enfants": nb_e}).execute()
-                                    enregistrer_log(user_principal, "Inscription", f"{qui} s'inscrit" + (f" (+{nb_e} enf.)" if requiert_enfants else "") + f" - {at_info_log}")
-                                    st.rerun()
+                                    confirm_inscription_dialog(qui, id_adh, at['id'], at['date_atelier'], nb_e, requiert_enfants, at_info_log, user_principal)
 
 # ==========================================
 # SECTION 📊 SUIVI & RÉCAP (inchangée)
 # ==========================================
 elif menu == "📊 Suivi & Récap":
     st.header("🔎 Consultation")
-    t1, t2 = st.tabs(["👤 Par Assistante Maternelle", "📅 Par Atelier"])
+    t1, t2, t3 = st.tabs(["👤 Par Assistante Maternelle", "📅 Par Atelier", "🪑 Places restantes"])
 
     with t1:
         choix = st.multiselect("Filtrer par assistante maternelle :", liste_adh, key="pub_filter_am")
@@ -1132,6 +1160,112 @@ elif menu == "📊 Suivi & Récap":
                     st.markdown('<hr class="separateur-atelier">', unsafe_allow_html=True)
         else:
             st.info("Aucun atelier trouvé sur cette période.")
+
+    with t3:
+        st.caption("Ateliers non complets, groupés par lieu, triés par nombre de places restantes décroissant.")
+
+        cpr1, cpr2 = st.columns(2)
+        d_deb_pr = cpr1.date_input("Du", date.today(), key="pr_date_debut", format="DD/MM/YYYY")
+        d_fin_pr = cpr2.date_input("Au", fin_defaut_places_restantes(), key="pr_date_fin", format="DD/MM/YYYY")
+        st.caption(f"Période calculée automatiquement (du jour au 31/07 suivant) ; modifiable librement.")
+
+        lieux_dispo_pr = sorted([l['nom'] for l in load_lieux()])
+        lieux_choisis_pr = st.multiselect(
+            "Filtrer par lieu :", lieux_dispo_pr, default=lieux_dispo_pr, key="pr_filtre_lieux"
+        )
+
+        filtre_verrou_pr = st.radio(
+            "Ateliers :",
+            ["Tous les ateliers", "Réservés à la responsable (verrouillés)", "Ouverts uniquement"],
+            index=0, horizontal=True, key="pr_filtre_verrou"
+        )
+
+        if not lieux_choisis_pr:
+            st.info("Sélectionnez au moins un lieu.")
+        else:
+            ats_pr = supabase.table("ateliers").select("*, lieux(nom), horaires(libelle)") \
+                .eq("est_actif", True) \
+                .gte("date_atelier", str(d_deb_pr)) \
+                .lte("date_atelier", str(d_fin_pr)) \
+                .order("date_atelier").execute().data or []
+
+            # Filtre par lieu (relation, donc filtré après récupération)
+            ats_pr = [a for a in ats_pr if a.get('lieux') and a['lieux']['nom'] in lieux_choisis_pr]
+
+            # Filtre par statut de verrouillage
+            if filtre_verrou_pr == "Réservés à la responsable (verrouillés)":
+                ats_pr = [a for a in ats_pr if is_verrouille(a)]
+            elif filtre_verrou_pr == "Ouverts uniquement":
+                ats_pr = [a for a in ats_pr if not is_verrouille(a)]
+
+            occ_par_atelier_pr = {}
+            if ats_pr:
+                at_ids_pr = [a['id'] for a in ats_pr]
+                ins_pr = supabase.table("inscriptions").select("atelier_id, nb_enfants").in_("atelier_id", at_ids_pr).execute().data or []
+                for ins in ins_pr:
+                    e = occ_par_atelier_pr.setdefault(ins['atelier_id'], {"ad": 0, "enf": 0})
+                    e["ad"] += 1
+                    e["enf"] += ins['nb_enfants'] or 0
+
+            # Regroupement par lieu, ateliers complets exclus
+            lignes_par_lieu_pr = {}
+            for a in ats_pr:
+                occ = occ_par_atelier_pr.get(a['id'], {"ad": 0, "enf": 0})
+                restantes_pr = a['capacite_max'] - (occ['ad'] + occ['enf'])
+                if restantes_pr <= 0:
+                    continue
+                lignes_par_lieu_pr.setdefault(a['lieux']['nom'], []).append({
+                    "date": a['date_atelier'],
+                    "titre": a['titre'],
+                    "restantes": restantes_pr,
+                    "verrouille": is_verrouille(a)
+                })
+
+            if not lignes_par_lieu_pr:
+                st.info("Aucun atelier avec des places restantes sur cette période et ces filtres.")
+            else:
+                ordre_lieux_pr = sorted(
+                    lignes_par_lieu_pr.keys(),
+                    key=lambda l: (-max(r['restantes'] for r in lignes_par_lieu_pr[l]), l)
+                )
+                for nom_lieu_pr in ordre_lieux_pr:
+                    lignes_pr = sorted(lignes_par_lieu_pr[nom_lieu_pr], key=lambda r: -r['restantes'])
+                    nb_at_pr = len(lignes_pr)
+                    st.markdown(
+                        f"<div style='font-weight:700;color:#1b5e20;border-bottom:2px solid #1b5e20;"
+                        f"padding:8px 2px 6px;margin-top:14px;'>{html_lib.escape(nom_lieu_pr)} "
+                        f"<span style='font-weight:400;color:#777;font-size:0.82rem;'>"
+                        f"({nb_at_pr} atelier{'s' if nb_at_pr > 1 else ''} non complet{'s' if nb_at_pr > 1 else ''})</span></div>",
+                        unsafe_allow_html=True
+                    )
+                    html_pr = "<table style='border-collapse:collapse;width:100%;'>"
+                    html_pr += (
+                        "<tr>"
+                        "<th style='text-align:left;padding:6px 8px;font-size:0.72rem;text-transform:uppercase;color:#777;'>Date</th>"
+                        "<th style='text-align:left;padding:6px 8px;font-size:0.72rem;text-transform:uppercase;color:#777;'>Atelier</th>"
+                        "<th style='text-align:left;padding:6px 8px;font-size:0.72rem;text-transform:uppercase;color:#777;'>Places restantes</th>"
+                        "</tr>"
+                    )
+                    for r in lignes_pr:
+                        verrou_txt = (
+                            " <span style='font-size:0.76rem;color:#e65100;font-weight:600;'>🔒 verrouillé</span>"
+                            if r['verrouille'] else ""
+                        )
+                        est_faible = r['restantes'] <= 3
+                        couleur_badge = "#e65100" if est_faible else "#1b5e20"
+                        fond_badge = "#fdf2e9" if est_faible else "#eef2ea"
+                        suffixe_place = "place" if r['restantes'] <= 1 else "places"
+                        html_pr += (
+                            "<tr>"
+                            f"<td style='padding:8px;border-top:1px solid #e2ddd0;white-space:nowrap;'>{format_date_fr_simple(r['date'])}</td>"
+                            f"<td style='padding:8px;border-top:1px solid #e2ddd0;font-weight:600;'>{html_lib.escape(r['titre'])}{verrou_txt}</td>"
+                            f"<td style='padding:8px;border-top:1px solid #e2ddd0;'>"
+                            f"<span style='font-family:monospace;font-weight:700;padding:2px 10px;border-radius:999px;"
+                            f"background:{fond_badge};color:{couleur_badge};'>{r['restantes']} {suffixe_place}</span></td>"
+                            "</tr>"
+                        )
+                    html_pr += "</table>"
+                    st.markdown(html_pr, unsafe_allow_html=True)
 
 # ==========================================
 # SECTION 🔐 ADMINISTRATION (inchangée)
