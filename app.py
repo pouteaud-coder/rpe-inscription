@@ -919,14 +919,15 @@ def confirm_unsubscribe_dialog(ins_id, nom_complet, atelier_info, user_admin="Ut
         st.rerun()
 
 @st.dialog("✅ Confirmation d'inscription")
-def confirm_inscription_dialog(nom_complet, id_adh, atelier_id, date_atelier, nb_enfants, requiert_enfants, at_info_log, user_admin="Utilisateur"):
+def confirm_inscription_dialog(nom_complet, id_adh, atelier_id, date_atelier, nb_enfants, requiert_enfants, at_info_log, user_admin="Utilisateur", lieu_txt="", horaire_txt=""):
     """Double validation avant d'enregistrer une inscription : récapitulatif + Confirmer / Modifier / Annuler."""
     date_txt = format_date_fr_simple(date_atelier)
+    lieu_horaire_txt = f", **{lieu_txt}** ({horaire_txt})" if lieu_txt else ""
     if requiert_enfants:
         suffixe = "enfant" if nb_enfants <= 1 else "enfants"
-        st.markdown(f"Inscription de **{nom_complet}** à l'atelier du **{date_txt}** pour **{nb_enfants} {suffixe}**.")
+        st.markdown(f"Inscription de **{nom_complet}** à l'atelier du **{date_txt}**{lieu_horaire_txt} pour **{nb_enfants} {suffixe}**.")
     else:
-        st.markdown(f"Inscription de **{nom_complet}** à l'atelier du **{date_txt}**.")
+        st.markdown(f"Inscription de **{nom_complet}** à l'atelier du **{date_txt}**{lieu_horaire_txt}.")
     c1, c2, c3 = st.columns(3)
     if c1.button("✅ Confirmer l'inscription", type="primary", use_container_width=True):
         supabase.table("inscriptions").insert({"adherent_id": id_adh, "atelier_id": atelier_id, "nb_enfants": nb_enfants}).execute()
@@ -1192,7 +1193,7 @@ if menu == "📝 Inscriptions":
                                 if restantes - (1 + nb_e) < 0:
                                     st.error("Manque de places")
                                 else:
-                                    confirm_inscription_dialog(qui, id_adh, at['id'], at['date_atelier'], nb_e, requiert_enfants, at_info_log, user_principal)
+                                    confirm_inscription_dialog(qui, id_adh, at['id'], at['date_atelier'], nb_e, requiert_enfants, at_info_log, user_principal, at['lieux']['nom'], at['horaires']['libelle'])
 
 # ==========================================
 # SECTION 📊 SUIVI & RÉCAP (inchangée)
