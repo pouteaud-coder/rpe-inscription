@@ -137,6 +137,11 @@ def get_color(nom_lieu):
     hash_object = hashlib.md5(str(nom_lieu).upper().strip().encode())
     return f"#{hash_object.hexdigest()[:6]}"
 
+def hex_vers_rgb(hex_color):
+    """Convertit une couleur '#rrggbb' en tuple (r, g, b) pour pdf.set_fill_color()."""
+    h = hex_color.lstrip('#')
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
 @st.cache_data(ttl=300)
 def get_secret_code():
     try:
@@ -712,6 +717,48 @@ def export_suivi_inscription_pdf(title, rows, lieux_cols, totaux_par_lieu, total
 
     return pdf.output(dest='S').encode('latin-1')
 
+def export_places_restantes_pdf(title, lignes_par_lieu, ordre_lieux, periode_txt):
+    """Export PDF de l'écran Places restantes : ateliers non complets groupés par lieu
+    (en-tête coloré par lieu, comme à l'écran), triés par places restantes décroissantes."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
+    pdf.set_font("Arial", size=10)
+    pdf.set_text_color(90, 90, 90)
+    pdf.cell(0, 6, periode_txt.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+    if not lignes_par_lieu:
+        pdf.set_font("Arial", size=11)
+        pdf.cell(0, 10, "Aucun atelier avec des places restantes sur cette periode et ces filtres.", ln=True)
+        return pdf.output(dest='S').encode('latin-1')
+
+    for nom_lieu in ordre_lieux:
+        lignes = lignes_par_lieu[nom_lieu]
+        r, g, b = hex_vers_rgb(get_color(nom_lieu))
+
+        pdf.set_fill_color(r, g, b)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Arial", 'B', 11)
+        nb_at = len(lignes)
+        entete = f"  {nom_lieu}  ({nb_at} atelier{'s' if nb_at > 1 else ''} non complet{'s' if nb_at > 1 else ''})"
+        pdf.cell(0, 8, entete.encode('latin-1', 'replace').decode('latin-1'), ln=True, fill=True)
+        pdf.set_text_color(0, 0, 0)
+
+        pdf.set_font("Arial", size=10)
+        for r_ligne in lignes:
+            date_fr = format_date_fr_simple(r_ligne['date'])
+            verrou_txt = "  [VERROUILLE]" if r_ligne['verrouille'] else ""
+            suffixe_place = "place" if r_ligne['restantes'] <= 1 else "places"
+            ligne = f"     {date_fr}  |  {r_ligne['titre']}{verrou_txt}  —  {r_ligne['restantes']} {suffixe_place} restantes"
+            pdf.cell(0, 6, ligne.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+
+        pdf.ln(3)
+
+    return pdf.output(dest='S').encode('latin-1')
+
 # --- DIALOGUES (inchangés) ---
 @st.dialog("⚠️ Confirmation")
 def secure_delete_dialog(table, item_id, label, current_code):
@@ -940,7 +987,9 @@ if menu == "📝 Inscriptions":
             ins_by_atelier = {}
 
         for at in res_at.data:
-            res_ins_data = ins_by_atelier.get(at['id'], [])
+            # Triées par ordre d'inscription (id croissant) : la dernière personne inscrite apparaît en dernier dans la liste,
+            # ce qui rend visible que sa nouvelle inscription a bien été prise en compte.
+            res_ins_data = sorted(ins_by_atelier.get(at['id'], []), key=lambda i: i['id'])
             total_occ = sum([(1 + (i['nb_enfants'] if i['nb_enfants'] else 0)) for i in res_ins_data])
             restantes = at['capacite_max'] - total_occ
             statut_p = f"✅ {restantes} pl. libres" if restantes > 0 else "🚨 COMPLET"
@@ -1039,7 +1088,7 @@ if menu == "📝 Inscriptions":
 # ==========================================
 elif menu == "📊 Suivi & Récap":
     st.header("🔎 Consultation")
-    t1, t2, t3 = st.tabs(["👤 Par Assistante Maternelle", "📅 Par Atelier", "🪑 Places restantes"])
+    t1, t2, t3 = st.tabs(["👤 Par AM", "📅 Par Atelier", "🪑 Places restantes"])
 
     with t1:
         choix = st.multiselect("Filtrer par assistante maternelle :", liste_adh, key="pub_filter_am")
@@ -1221,13 +1270,21 @@ elif menu == "📊 Suivi & Récap":
                     "verrouille": is_verrouille(a)
                 })
 
+            ordre_lieux_pr = sorted(
+                lignes_par_lieu_pr.keys(),
+                key=lambda l: (-max(r['restantes'] for r in lignes_par_lieu_pr[l]), l)
+            ) if lignes_par_lieu_pr else []
+
+            periode_txt_pr = f"Periode du {d_deb_pr.strftime('%d/%m/%Y')} au {d_fin_pr.strftime('%d/%m/%Y')} - {filtre_verrou_pr}"
+            st.download_button(
+                "📄 Exporter en PDF",
+                data=export_places_restantes_pdf("Places restantes", lignes_par_lieu_pr, ordre_lieux_pr, periode_txt_pr),
+                file_name="places_restantes.pdf", key="pr_pdf"
+            )
+
             if not lignes_par_lieu_pr:
                 st.info("Aucun atelier avec des places restantes sur cette période et ces filtres.")
             else:
-                ordre_lieux_pr = sorted(
-                    lignes_par_lieu_pr.keys(),
-                    key=lambda l: (-max(r['restantes'] for r in lignes_par_lieu_pr[l]), l)
-                )
                 for nom_lieu_pr in ordre_lieux_pr:
                     lignes_pr = sorted(lignes_par_lieu_pr[nom_lieu_pr], key=lambda r: -r['restantes'])
                     nb_at_pr = len(lignes_pr)
@@ -1569,15 +1626,21 @@ elif menu == "🔐 Administration":
                 unsafe_allow_html=True
             )
 
-            filtre_statut_si = st.radio("Ateliers :", ["Actifs", "Inactifs", "Tous"], index=0, horizontal=True, key="si_filtre_statut")
+            csi4, csi5 = st.columns(2)
+            filtre_statut_si = csi4.radio("Ateliers :", ["Actifs", "Inactifs", "Tous"], index=0, horizontal=True, key="si_filtre_statut")
+            filtre_verrou_si = csi5.radio("Verrouillage :", ["Tous", "Verrouillés", "Non verrouillés"], index=0, horizontal=True, key="si_filtre_verrou")
 
-            query_si = supabase.table("ateliers").select("id, date_atelier, est_actif, lieux(nom)") \
+            query_si = supabase.table("ateliers").select("id, date_atelier, est_actif, Verrouille, lieux(nom)") \
                 .gte("date_atelier", str(d_deb_si)).lte("date_atelier", str(d_fin_si))
             if filtre_statut_si == "Actifs":
                 query_si = query_si.eq("est_actif", True)
             elif filtre_statut_si == "Inactifs":
                 query_si = query_si.eq("est_actif", False)
             ateliers_si = query_si.execute().data or []
+            if filtre_verrou_si == "Verrouillés":
+                ateliers_si = [a for a in ateliers_si if is_verrouille(a)]
+            elif filtre_verrou_si == "Non verrouillés":
+                ateliers_si = [a for a in ateliers_si if not is_verrouille(a)]
             at_by_id_si = {a['id']: a for a in ateliers_si}
 
             if at_by_id_si:
@@ -1628,7 +1691,8 @@ elif menu == "🔐 Administration":
 
             total_general_si = sum(totaux_par_lieu_si.values())
 
-            periode_txt_si = f"Periode du {d_deb_si.strftime('%d/%m/%Y')} au {d_fin_si.strftime('%d/%m/%Y')} - Ateliers {filtre_statut_si.lower()}"
+            suffixe_verrou_si = "" if filtre_verrou_si == "Tous" else f" - {filtre_verrou_si}"
+            periode_txt_si = f"Periode du {d_deb_si.strftime('%d/%m/%Y')} au {d_fin_si.strftime('%d/%m/%Y')} - Ateliers {filtre_statut_si.lower()}{suffixe_verrou_si}"
 
             ce_si1, ce_si2 = st.columns(2)
             ce_si1.download_button(
@@ -1650,7 +1714,8 @@ elif menu == "🔐 Administration":
                 html_si += "<thead><tr>"
                 html_si += "<th style='text-align:left;padding:8px 10px;background:#1b5e20;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;'>Assistante Maternelle</th>"
                 for lieu in lieux_cols_si:
-                    html_si += f"<th style='text-align:left;padding:8px 10px;background:#1b5e20;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;'>{html_lib.escape(lieu)}</th>"
+                    c_lieu_si = get_color(lieu)
+                    html_si += f"<th style='text-align:left;padding:8px 10px;background:{c_lieu_si};color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;'>{html_lib.escape(lieu)}</th>"
                 html_si += "<th style='text-align:center;padding:8px 10px;background:#4c8c52;color:white;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;'>Total</th></tr></thead>"
                 html_si += "<tbody>"
 
@@ -1665,9 +1730,10 @@ elif menu == "🔐 Administration":
                         c = r['cells'][lieu]
                         if c['count'] > 0:
                             dates_txt = ", ".join(c['dates'])
+                            c_lieu_si_cell = get_color(lieu)
                             html_si += (
                                 f"<td style='padding:8px 10px;border-top:1px solid #e2ddd0;'>"
-                                f"<span style='font-size:1.05rem;font-weight:800;color:#1b5e20;'>{c['count']}</span><br>"
+                                f"<span style='font-size:1.05rem;font-weight:800;color:{c_lieu_si_cell};'>{c['count']}</span><br>"
                                 f"<span style='font-size:0.72rem;color:#777;'>{html_lib.escape(dates_txt)}</span></td>"
                             )
                         else:
