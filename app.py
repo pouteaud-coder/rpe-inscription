@@ -664,6 +664,8 @@ def export_suivi_inscription_pdf(title, rows, lieux_cols, totaux_par_lieu, total
         pdf.set_text_color(255, 255, 255)
         pdf.cell(largeur_nom, header_h, "Assistante Maternelle".encode('latin-1', 'replace').decode('latin-1'), border=1, fill=True)
         for lieu in lieux_cols:
+            r_l, g_l, b_l = hex_vers_rgb(get_color(lieu))
+            pdf.set_fill_color(r_l, g_l, b_l)
             pdf.cell(largeur_lieu, header_h, lieu.encode('latin-1', 'replace').decode('latin-1')[:22], border=1, fill=True, align='C')
         pdf.set_fill_color(76, 140, 82)
         pdf.cell(largeur_total, header_h, "Total", border=1, fill=True, align='C', ln=True)
@@ -703,7 +705,8 @@ def export_suivi_inscription_pdf(title, rows, lieux_cols, totaux_par_lieu, total
             pdf.set_xy(x, y_start)
             if c['count'] > 0:
                 pdf.set_font("Arial", 'B', 11)
-                pdf.set_text_color(27, 94, 32)
+                r_c, g_c, b_c = hex_vers_rgb(get_color(lieu))
+                pdf.set_text_color(r_c, g_c, b_c)
             else:
                 pdf.set_font("Arial", size=9)
                 pdf.set_text_color(160, 160, 160)
